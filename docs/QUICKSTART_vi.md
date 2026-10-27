@@ -1,4 +1,4 @@
-# Quick Start - Windows 11 (OpenAlex Literature Intelligence v3.0.5 Stable)
+# Quick Start - Windows 11 (OpenAlex Literature Intelligence v3.2.0)
 
 ```powershell
 git clone https://github.com/tvquynh/openalex-literature-intelligence.git C:\OpenAlexV3
@@ -57,3 +57,41 @@ python literature_pipeline.py run `
 ```
 
 Main corpus mặc định chỉ giữ **journal** còn có trong snapshot SCImago latest theo manifest. Dùng `--all-source-types` nếu muốn tắt journal-only; raw/enriched vẫn giữ toàn bộ source type.
+
+## Các tính năng mới (v3.1.0 đến v3.2.0)
+
+Chỉ khớp query với tiêu đề và tóm tắt (từ v3.2.0), đồng thời loại bài đã bị rút (từ v3.1.0):
+
+```powershell
+python literature_pipeline.py run `
+  --query-file examples\queries_example.txt `
+  --search-field title_and_abstract `
+  --from-year 2010 `
+  --to-year 2026 `
+  --require-abstract `
+  --exclude-retracted `
+  --output PE_Malware_TA
+```
+
+Mặc định (`search`), OpenAlex khớp cả toàn văn nên số kết quả lớn hơn nhiều. Với `title_and_abstract`, query không được chứa dấu `,` hoặc `|`; muốn dùng mặc định này cho mọi lần chạy thì đặt `"search_field": "title_and_abstract"` trong mục `run` của `config.json`. Mỗi bài cũng có thêm cột `is_retracted`, `fwci` và `citation_normalized_percentile` từ OpenAlex.
+
+Gắn tầng nguồn công bố theo danh sách của riêng bạn (không loại bài nào; file mẫu chỉ minh họa định dạng):
+
+```powershell
+python literature_pipeline.py enrich `
+  --input PE_Malware_TA_raw.jsonl `
+  --output PE_Malware_TA_tiers `
+  --all-source-types `
+  --venue-tiers examples\venue_tiers_example.tsv
+```
+
+Tải PDF truy cập mở (không cần API key; chạy thử 20 bài trước):
+
+```powershell
+python literature_pipeline.py fetch-oa --input PE_Malware_TA_main.csv --limit 20
+python literature_pipeline.py fetch-oa --input PE_Malware_TA_main.csv
+```
+
+PDF nằm trong `PE_Malware_TA_main_fulltext\pdf\`. Bài không tải được có trong `PE_Malware_TA_main_fulltext\manual_download.html` (kèm `.csv` và `.ris` cho Zotero); PDF tải tay lưu vào `pdf_manual\` theo tên file gợi ý, lần chạy sau sẽ ghi nhận. Máy chủ trả về trang kiểm tra chống bot không bao giờ bị hỏi lại.
+
+Chi tiết từng tính năng: [`README_vi.md`](README_vi.md), các mục 15 đến 18.

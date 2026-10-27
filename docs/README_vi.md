@@ -1,8 +1,8 @@
-# OpenAlex Literature Intelligence v3.0.5 Stable
+# OpenAlex Literature Intelligence v3.2.0
 
-> Bản tiếng Việt của README v3.0.5. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Từ v3.1.0 có thêm lệnh `fetch-oa` tải toàn văn truy cập mở; cách dùng xem mục "Open-access full text" trong README tiếng Anh hoặc Phụ lục G của USER_GUIDE.md. Cũng từ v3.1.0, mỗi bài có thêm cờ bài đã bị rút (`is_retracted`) và số trích dẫn đã chuẩn hóa của OpenAlex (`fwci`, `citation_normalized_percentile`); tùy chọn `--exclude-retracted` loại bài đã bị rút, còn `--venue-tiers <file>` gắn tầng nguồn công bố theo danh sách do người dùng tự lập mà không loại bài nào. Cách dùng xem mục "Quality signals and venue tiers" trong README tiếng Anh hoặc Phụ lục H của USER_GUIDE.md. Từ v3.2.0, lệnh `run` có tùy chọn `--search-field title_and_abstract` để query chỉ được khớp với tiêu đề và tóm tắt, thay vì cả toàn văn như mặc định; cách dùng xem mục "Search field" trong README tiếng Anh hoặc Phụ lục I của USER_GUIDE.md.
+> Bản tiếng Việt của README. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Các tính năng có từ v3.1.0 đến v3.2.0 được hướng dẫn ở các mục 15 đến 18 của phần "Các lệnh chính": chọn chỗ khớp query (`--search-field`), cờ bài bị rút và số trích dẫn chuẩn hóa, tầng nguồn công bố (`--venue-tiers`), tải toàn văn truy cập mở (`fetch-oa`).
 
-Phiên bản: **3.0.5** · Trạng thái: **Stable** · Ngày phát hành: 2026-10-25 · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
+Phiên bản: **3.2.0** · Ngày phát hành: 2026-10-27 · Bản ổn định trước: 3.0.5 (2026-10-25) · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
 
 ## Công cụ làm gì (What does the tool do?)
 
@@ -12,6 +12,9 @@ Phiên bản: **3.0.5** · Trạng thái: **Stable** · Ngày phát hành: 2026-
 - **Latest source status**: `ACTIVE_LATEST` / `HISTORICAL_ONLY` / `UNMATCHED` / `AMBIGUOUS` theo snapshot SCImago mới nhất.
 - **Journal screening**: main corpus mặc định = journal + `ACTIVE_LATEST`; có thể lọc thêm theo quartile, category, APC ước tính, DOAJ, CWTS Core.
 - **Audit / reproducibility**: giữ nguyên raw corpus, ghi lý do loại từng paper, audit từng source, `summary.json`, `run_metadata.json` (phiên bản, policy, manifest, môi trường), SHA-256 cho mọi file SCImago.
+- **Chọn chỗ khớp query (v3.2.0)**: mặc định khớp cả toàn văn mà OpenAlex có; `--search-field title_and_abstract` chỉ khớp tiêu đề và tóm tắt (mục 15).
+- **Tín hiệu chất lượng và tầng nguồn công bố (v3.1.0)**: cờ bài bị rút, số trích dẫn chuẩn hóa của OpenAlex, và nhãn tầng nguồn theo danh sách do người dùng lập (mục 16 và 17).
+- **Toàn văn truy cập mở (v3.1.0)**: `fetch-oa` tải PDF truy cập mở một cách tuần tự, có giãn cách; máy chủ trả về trang kiểm tra chống bot không bị hỏi lại, và mọi bài không tải được vào danh sách tải tay (mục 18).
 
 Pipeline chính:
 
@@ -49,7 +52,7 @@ OpenAlex discovery
 - Windows 11 / Linux / macOS
 - Python 3.11+ khuyến nghị
 - Internet cho OpenAlex và lần đầu đồng bộ SCImago
-- OpenAlex API key: bắt buộc cho lệnh `run` (đặt trong `config.json`); `sync-scimago`, `validate-repo`, `enrich`, `inspect-source` không cần key
+- OpenAlex API key: bắt buộc cho lệnh `run` (đặt trong `config.json`); `sync-scimago`, `validate-repo`, `enrich`, `inspect-source`, `fetch-oa` không cần key
 
 ## Cài nhanh trên Windows 11
 
@@ -141,7 +144,7 @@ notepad config.json
 {
   "openalex": { "api_key": "YOUR_OPENALEX_API_KEY", "email": "" },
   "scimago":  { "manifest_url": "https://scopus.cuatui.cloud/du-lieu/scimago/manifest.json", "cache_dir": "cache/scimago" },
-  "run":      { "from_year": 2010, "to_year": 2026, "require_abstract": false, "max_per_query": null }
+  "run":      { "from_year": 2010, "to_year": 2026, "require_abstract": false, "max_per_query": null, "search_field": "search" }
 }
 ```
 
@@ -153,8 +156,8 @@ CLI argument  >  config.json  >  default trong code
 
 - Chuỗi rỗng trong `config.json` nghĩa là "dùng default". `cache_dir` tương đối được tính theo thư mục chứa `config.json`.
 - Có thể chỉ tới file khác bằng `--config <đường dẫn>`. Nếu không có `--config` và không có `config.json`, tool chạy bằng tham số CLI và default.
-- File được kiểm tra chặt: section/khóa lạ hoặc sai kiểu dữ liệu đều báo `ERROR (config)` và dừng (exit 2). Thông báo lỗi không bao giờ in lại giá trị trong file.
-- `run` cần key. Nếu không có key, tool dừng ngay trước mọi request với hướng dẫn tạo `config.json`. `sync-scimago`, `validate-repo`, `enrich`, `inspect-source` không cần key.
+- File được kiểm tra chặt: section/khóa lạ, sai kiểu dữ liệu, hoặc `run.search_field` khác `search` và `title_and_abstract` đều báo `ERROR (config)` và dừng (exit 2). Thông báo lỗi không bao giờ in lại giá trị trong file.
+- `run` cần key. Nếu không có key, tool dừng ngay trước mọi request với hướng dẫn tạo `config.json`. `sync-scimago`, `validate-repo`, `enrich`, `inspect-source`, `fetch-oa` không cần key.
 - `run_metadata.json` chỉ ghi `openalex_api_key_configured: true`, `openalex_api_key_source: "config.json"`, `openalex_api_key_stored_in_output: false` (cùng `config_file`, `settings_sources`), không bao giờ ghi giá trị key.
 - Từ v3.0.5 code không còn email mặc định: `mailto` gửi cho OpenAlex lấy từ `--email` hoặc `openalex.email` trong `config.json`; để trống thì không gửi `mailto`.
 - Tương thích ngược: `--api-key` (lộ trong shell history) và biến môi trường `OPENALEX_API_KEY` vẫn dùng được nhưng không khuyến khích; biến môi trường chỉ được dùng khi `config.json` không có key.
@@ -267,7 +270,17 @@ python literature_pipeline.py run `
   --output PE_Malware_Q1_Q2
 ```
 
-Lưu ý: paper năm 2026 chưa có SJR 2026 nên `quartile_at_publication` để trống. Nếu dùng filter publication-year quartile, các paper 2026 sẽ không qua filter Q1/Q2. Nếu muốn lọc bằng snapshot mới nhất, dùng `--quartile-basis latest`.
+Lưu ý về paper mới hơn dữ liệu SCImago. Với `--quartile-basis publication` (mặc định), mỗi paper được lọc theo quartile của đúng năm xuất bản. Dữ liệu SCImago hiện chỉ đến năm 2025, nên paper năm 2026 không có quartile năm xuất bản (`best_quartile_at_publication` để trống) và không qua filter Q1/Q2 theo cách này. Công cụ không bao giờ chép quartile năm 2025 sang các cột năm xuất bản.
+
+Khi nguồn của paper có trong snapshot mới nhất (`ranking_basis = LATEST_AVAILABLE`), cột `main_exclusion_reasons` ghi `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE` để chỉ rõ nguyên nhân, `run` và `enrich` in cảnh báo kèm số paper bị ảnh hưởng:
+
+```text
+WARNING: SCImago data ends at 2025. 12 papers published after 2025 have no publication-year quartile and failed the current quartile filter (QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE). Use --quartile-basis latest if you intentionally want to screen them using the latest available SCImago snapshot (not a quartile of their publication year).
+```
+
+`_summary.json` luôn có mục `quartile_filter_diagnostics` (danh sách quartile đang lọc, basis, mode, `scimago_latest_year` và `future_year_papers_without_publication_quartile`); số paper bị ảnh hưởng bằng 0 khi không có `--quartile` hoặc khi dùng `--quartile-basis latest`. Kết quả sàng lọc không đổi: chỉ thêm lý do loại chính xác hơn.
+
+Nếu muốn lọc các paper này bằng snapshot mới nhất, dùng `--quartile-basis latest`. Khi đó paper năm 2026 được lọc theo quartile năm 2025 của nguồn công bố, không phải quartile năm 2026. Ví dụ, chạy `enrich` trên 100 paper của một query 2010-2026 với `--all-source-types --quartile Q1 --quartile Q2`: 36 paper năm 2026, trong đó 12 paper thuộc nguồn có trong snapshot 2025; main corpus có 13 paper theo publication basis và 22 paper theo latest basis.
 
 ## 6. Lọc Q1/Q2 theo relevant category
 
@@ -462,6 +475,115 @@ python literature_pipeline.py run ... --no-resume
 
 Nếu thay đổi query/year/filter nhưng vẫn dùng cùng output prefix, nên dùng `--no-resume` hoặc đổi output prefix.
 
+## 15. Chọn chỗ khớp query: `--search-field` (từ v3.2.0)
+
+Mặc định, `run` gửi query vào tham số `search` của OpenAlex. Tham số này khớp tiêu đề, tóm tắt và cả toàn văn của những bài mà OpenAlex có toàn văn, nên một query có thể kéo về nhiều bài chỉ nhắc tới từ khóa ở phần tổng quan tài liệu. Với `--search-field title_and_abstract`, query được gửi vào bộ lọc `title_and_abstract.search` và chỉ được khớp với tiêu đề và tóm tắt.
+
+```powershell
+python literature_pipeline.py run `
+  --query 'malware AND ("concept drift" OR "temporal drift" OR "dataset shift")' `
+  --search-field title_and_abstract `
+  --require-abstract `
+  --from-year 2010 `
+  --to-year 2026 `
+  --output drift
+```
+
+Ngày 27/10/2026, query trên (2010-2026, có tóm tắt) khớp 3124 bài với `search` và 228 bài với `title_and_abstract`. Cả 228 bài đều chứa từ khóa trong tiêu đề hoặc tóm tắt, còn trong 100 bài đầu tiên mà `search` trả về có 15 bài không nhắc tới malware ở hai phần này. Đổi lại, `title_and_abstract` bỏ sót những bài liên quan có tiêu đề và tóm tắt dùng từ khác. Trước một lần thu thập lớn, nên đếm xem với mỗi cách khớp, query tìm lại được bao nhiêu bài đã biết là liên quan, chẳng hạn các bài hạt giống của một tổng quan.
+
+- Đặt mặc định bằng `run.search_field` trong `config.json` (`"search"` hoặc `"title_and_abstract"`); `--search-field` trên dòng lệnh được ưu tiên hơn.
+- Query dùng với `title_and_abstract` không được chứa dấu `,` hoặc `|`: trong bộ lọc của OpenAlex, dấu phẩy ngăn cách các bộ lọc và `|` nghĩa là OR giữa các giá trị. Query như vậy bị từ chối trước mọi lượt gọi SCImago hoặc OpenAlex (mã thoát 2); hãy nối các từ bằng `OR`. Với `search`, hai ký tự này vẫn dùng được như trước.
+- Cú pháp query giống như với `search`: `AND`, `OR`, `NOT` viết hoa, cụm từ trong ngoặc kép và dấu ngoặc đơn. OpenAlex coi dấu gạch nối là ranh giới từ, nên `"concept drift"` khớp cả `concept-drift`.
+- Cách khớp được ghi trong `_run_metadata.json` (`search_field`), `_summary.json` (`openalex.search_field`) và checkpoint. Chạy tiếp một checkpoint với cách khớp khác thì lệnh dừng với thông báo `Checkpoint parameters changed`; khi đó dùng `--no-resume` hoặc đổi `--output`. Checkpoint của các bản trước vẫn chạy tiếp được với cách khớp mặc định.
+
+## 16. Cờ bài bị rút và số trích dẫn chuẩn hóa (từ v3.1.0)
+
+Từ v3.1.0, mỗi bài mà `run` lấy về có thêm 5 cột từ OpenAlex. Các cột này lấy từ chính các phản hồi OpenAlex đã nhận, không tốn thêm lượt gọi.
+
+| Cột | Ý nghĩa |
+|---|---|
+| `is_retracted` | OpenAlex đánh dấu bài đã bị rút |
+| `fwci` | field-weighted citation impact: số trích dẫn của bài so với mức kỳ vọng của các bài cùng năm công bố và cùng lĩnh vực; 1,0 là mức kỳ vọng |
+| `citation_normalized_percentile` | phân vị trích dẫn của bài trong nhóm bài tương đương, từ 0 đến 1 |
+| `citation_top_1_percent`, `citation_top_10_percent` | bài có thuộc nhóm 1% hoặc 10% cao nhất theo phân vị đó hay không |
+
+- `--exclude-retracted` (dùng với `run` và `enrich`) chuyển bài đã bị rút sang `_excluded.csv` với lý do `RETRACTED`. Khi không có tùy chọn này, bài đã bị rút vẫn ở lại main corpus.
+- `_summary.json` có thêm `papers_retracted`, `papers_without_retraction_flag` và `papers_without_fwci`.
+- Khi gộp các bản trùng, cờ bài bị rút của bất kỳ bản nào cũng được giữ, còn số trích dẫn chỉ được điền vào chỗ đang trống.
+- OpenAlex tính `fwci` và `citation_normalized_percentile` tại thời điểm truy vấn, nên hai giá trị này thay đổi khi bài có thêm trích dẫn, ít ý nghĩa với bài của một hai năm gần nhất và để trống khi OpenAlex chưa tính. Công cụ không dùng chúng để lọc; nên dùng chúng để sắp thứ tự đọc trong cùng một nhóm bài.
+- Bản ghi lấy về bằng bản trước v3.1.0 không có các cột này, và `enrich` không bổ sung được; muốn có thì chạy lại `run`. Khi có bản ghi thiếu cờ, `run` và `enrich` in thông báo kèm số bản ghi thiếu.
+
+## 17. Gắn tầng nguồn công bố: `--venue-tiers` (từ v3.1.0)
+
+`--venue-tiers <file>` (dùng với `run` và `enrich`) gắn cho mỗi bài tầng của nguồn công bố theo một danh sách do người dùng tự lập và duyệt, chẳng hạn danh sách tầng trong giao thức tổng quan. Công cụ không tự xếp hạng nguồn công bố, và tùy chọn này không loại bài nào khỏi main corpus. File mẫu là `examples\venue_tiers_example.tsv`; các tầng trong đó chỉ để minh họa định dạng.
+
+Danh sách là file phân tách bằng TAB, hoặc bằng dấu phẩy nếu tên file kết thúc bằng `.csv`. File có một dòng tiêu đề, mỗi dòng sau là một nguồn công bố; dòng bắt đầu bằng `#` và dòng trống bị bỏ qua.
+
+| Cột | Nội dung |
+|---|---|
+| `tier` | nhãn tầng do người dùng đặt (A, B, core, ...); `UNLISTED` và `AMBIGUOUS` là tên dành riêng |
+| `venue` | tên ghi vào cột `venue_tier_venue` |
+| `openalex_source_id`, `issn`, `title_exact`, `title_contains` | cách nhận ra nguồn công bố; cần ít nhất một cột có giá trị, nhiều giá trị ngăn cách bằng `;` |
+
+```text
+tier	venue	openalex_source_id	issn	title_exact	title_contains
+A	IEEE Transactions on Information Forensics and Security		1556-6013; 1556-6021
+A	USENIX Security Symposium				usenix security symposium
+```
+
+Nguồn công bố của một bài được nhận diện lần lượt theo OpenAlex source ID, ISSN hoặc ISSN-L, toàn bộ tên nguồn trên OpenAlex (`title_exact`), rồi một cụm từ nằm trong tên nguồn (`title_contains`, khớp nguyên từ, cụm dài nhất được ưu tiên). Bước đầu tiên tìm thấy một nguồn trong danh sách quyết định kết quả. Khi so tên, công cụ không phân biệt chữ hoa với chữ thường và bỏ qua dấu câu, dấu phụ; `&` được coi là `and`. Mỗi ID, ISSN hay cụm từ chỉ được thuộc về một nguồn. Danh sách sai định dạng (cột lạ, tầng trống, ISSN hoặc source ID không hợp lệ, một khóa thuộc hai nguồn, ô thừa) làm lệnh dừng trước mọi lượt tải, kèm số dòng lỗi (mã thoát 2).
+
+Kết quả:
+
+- ba cột `venue_tier` (tầng, `UNLISTED` khi nguồn không có trong danh sách, `AMBIGUOUS` khi nguồn khớp hai mục ở cùng một bước), `venue_tier_venue` (nguồn trong danh sách đã khớp) và `venue_tier_match` (bước đã quyết định) trong các file `_enriched`, `_main`, `_excluded` và `_source_audit`;
+- `paper_venue_tier_counts` và `unique_source_venue_tier_counts` trong `_summary.json`;
+- đường dẫn, SHA-256, số nguồn và các tầng của danh sách trong `_run_metadata.json`, để truy được nhãn của một lần chạy về đúng danh sách đã dùng.
+
+Gặp `AMBIGUOUS` thì sửa danh sách rồi chạy lại `enrich`, không chọn tay. Chạy lại `enrich` mà không có `--venue-tiers` thì các cột tầng cũ bị xóa, không giữ nhãn cũ.
+
+```powershell
+python literature_pipeline.py enrich `
+  --input PE_Malware_raw.jsonl `
+  --output PE_Malware_tiers `
+  --all-source-types `
+  --exclude-retracted `
+  --venue-tiers my_venues.tsv
+```
+
+Hai điểm cần biết khi lập danh sách. SCImago không gán quartile cho kỷ yếu hội nghị, nên muốn xếp hội nghị cùng với tạp chí thì phải dùng danh sách. Bài hội nghị in trong tùng thư như Lecture Notes in Computer Science có nguồn OpenAlex là tên tùng thư, nên không nhận diện được hội nghị theo tên và cần xếp tầng bằng tay. Sau lần chạy đầu, xem các nguồn `UNLISTED` có nhiều bài nhất trong `_source_audit.csv` để bổ sung danh sách, và ghi danh sách cùng SHA-256 của nó vào giao thức.
+
+## 18. Tải toàn văn truy cập mở: `fetch-oa` (từ v3.1.0)
+
+```powershell
+python literature_pipeline.py fetch-oa --input PE_Malware_main.csv --limit 20   # chạy thử 20 bài
+python literature_pipeline.py fetch-oa --input PE_Malware_main.csv              # cả file; chạy lại lúc nào cũng được
+```
+
+`fetch-oa` đọc mọi file kết quả của `run` hoặc `enrich` (`*_main.csv`, `*_enriched.csv`, `*_enriched.jsonl`, `*_raw.csv`). Lệnh không cần API key và không gửi yêu cầu nào tới OpenAlex, vì nó dùng các cột `best_oa_pdf_url` và `oa_url` đã có trong file. Bài mà OpenAlex ghi là không truy cập mở được đưa thẳng vào danh sách tải tay, không gửi yêu cầu nào.
+
+Cách truy cập:
+
+- Yêu cầu được gửi lần lượt từng cái. Hai yêu cầu tới cùng một máy chủ cách nhau ít nhất `--delay` giây (mặc định 2, tối thiểu 1); nếu robots.txt đặt Crawl-delay dài hơn thì theo Crawl-delay, tối đa 60 giây. Mọi yêu cầu mang User-Agent riêng của công cụ.
+- robots.txt được tuân thủ theo RFC 9309. Máy chủ không đọc được robots.txt bị bỏ qua trong lần chạy đó.
+- Máy chủ trả về trang kiểm tra chống bot (trang challenge hoặc CAPTCHA, HTTP 403, hoặc header `tdm-reservation: 1`) được ghi ngay vào `blocked_hosts.json` và không nhận thêm yêu cầu nào, trong lần chạy này cũng như các lần sau. Công cụ không bao giờ tìm cách vượt qua kiểm tra chống bot; muốn thử lại một máy chủ thì xóa mục của nó trong file này.
+- HTTP 429, HTTP 5xx có Retry-After và lỗi mạng lặp lại chỉ tạm dừng máy chủ trong lần chạy hiện tại.
+- Máy chủ phân giải DOI (doi.org và các dịch vụ tương tự) không bao giờ bị chặn hẳn. Từ v3.1.1, máy chủ phân giải chỉ chuyển tiếp tới một trang chống bot cũng không bị tạm dừng, vì link DOI tiếp theo có thể dẫn tới nhà xuất bản khác; nó chỉ bị tạm dừng trong lần chạy khi chính nó trả về trang chống bot.
+- Chỉ giữ file PDF đầy đủ (bắt đầu bằng `%PDF-`, kết thúc bằng `%%EOF`, không quá `--max-mb`, mặc định 100 MB). Tiến độ được lưu sau mỗi bài, nên Ctrl+C hay sự cố giữa chừng không làm mất kết quả.
+
+Thư mục kết quả mặc định là `<tên file đầu vào>_fulltext\`, nằm cạnh file đầu vào; đổi bằng `--output-dir`.
+
+| File | Nội dung |
+|---|---|
+| `pdf\<OpenAlex ID>.pdf` | PDF đã tải |
+| `downloaded.csv` | mỗi bài đã tải một dòng: file, SHA-256, kích thước, URL nguồn |
+| `manual_download.csv`, `.html`, `.ris` | bài cần tải tay, kèm lý do, DOI, trang bài, link PDF và tên file nên dùng; file `.ris` nhập được vào Zotero |
+| `pdf_manual\` | nơi lưu PDF tải tay, đặt theo tên file gợi ý; lần chạy sau ghi nhận các file này và bỏ bài tương ứng khỏi danh sách |
+| `blocked_hosts.json`, `fetch_state.json`, `fetch_log.csv`, `fetch_summary.json` | máy chủ bị chặn kèm bằng chứng, trạng thái từng bài, mọi yêu cầu đã gửi, số liệu của lần chạy |
+
+Lý do trong danh sách tải tay gồm `NOT_OPEN_ACCESS` (không có bản mở, ví dụ tạp chí thuê bao), `BOT_CHECK`, `HOST_BLOCKED`, `ROBOTS_DISALLOWED`, `NOT_PDF` (link trả về trang web thay vì PDF), các lỗi HTTP, và các lỗi tạm thời như `RATE_LIMITED`, `HOST_PAUSED` hay `TRUNCATED`. Khi chạy lại, các bài đã tải được bỏ qua và chỉ các lỗi tạm thời được thử lại, xét riêng từng link. Thêm `--retry-failed` để thử lại cả các lỗi cố định (HTTP 4xx, không phải PDF, robots.txt); máy chủ đã bị chặn vẫn bị chặn.
+
+Trong một lần dùng thật trên 100 bài (xem [`TEST_REPORT.md`](../TEST_REPORT.md)), công cụ tải được 38 PDF, khoảng một nửa số bài có bản truy cập mở; phần còn lại chủ yếu do nhà xuất bản chặn bot hoặc do link dẫn tới trang bài thay vì file PDF. Truy cập mở không có nghĩa là được tự do tái sử dụng: hãy kiểm tra giấy phép của từng file trước khi chia sẻ.
+
 ---
 
 # Các output chính
@@ -493,7 +615,7 @@ PE_Malware_run_metadata.json
 | `_excluded.csv` | Paper bị loại, có cột `main_exclusion_reasons` |
 | `_source_audit.csv` | Một dòng mỗi OpenAlex source: status, Sourceid, method, ứng viên, `match_diagnostic`, số paper |
 | `_summary.json` | Số paper và số unique source theo status/class, method, quartile, ranking basis |
-| `_run_metadata.json` | Phiên bản tool, query, policy, manifest SCImago, môi trường; key chỉ ghi `openalex_api_key_configured`/`openalex_api_key_source`, không bao giờ ghi giá trị |
+| `_run_metadata.json` | Phiên bản tool, query, cách khớp query (`search_field`), policy, manifest SCImago, môi trường; key chỉ ghi `openalex_api_key_configured`/`openalex_api_key_source`, không bao giờ ghi giá trị |
 
 `enrich` tạo các file `_enriched`, `_main`, `_excluded`, `_source_audit`, `_summary`, `_run_metadata` (không có `_raw`/`_checkpoint`).
 
@@ -690,12 +812,14 @@ Không đưa API key vào:
 7. Bảo vệ chống mâu thuẫn ISSN chấp nhận âm tính giả để tránh dương tính giả: nếu OpenAlex chỉ ghi e-ISSN còn SCImago chỉ ghi print-ISSN của cùng tạp chí thì kết quả là `UNMATCHED` (`TITLE_MATCH_ISSN_CONFLICT`, có ghi Sourceid ứng viên để soát tay).
 8. H-index trong các file SCImago của mirror lặp lại giá trị hiện tại ở mọi năm, nên `h_index_at_publication` không phải H-index lịch sử.
 9. Với systematic review, nên giữ raw discovery corpus và ghi rõ screening policy thay vì chỉ lưu main corpus.
+10. `fwci` và `citation_normalized_percentile` do OpenAlex tính tại thời điểm truy vấn và thay đổi khi bài có thêm trích dẫn; tầng nguồn công bố chỉ phản ánh danh sách mà người dùng đưa vào.
+11. `fetch-oa` chỉ tải các bản truy cập mở mà OpenAlex liệt kê và dừng ở mọi trang kiểm tra chống bot, nên bài của các nhà xuất bản chặn bot phải tải tay.
 
 # Kiểm thử
 
 Kết quả kiểm thử của bản phát hành: xem [`TEST_REPORT.md`](../TEST_REPORT.md).
 
-Kiểm thử offline (52 test; không cần Internet, không cần API key; dùng repository SCImago giả lập và server 127.0.0.1):
+Kiểm thử offline (81 test; không cần Internet, không cần API key; dùng repository SCImago giả lập và server 127.0.0.1 với key giả và trang chống bot mô phỏng):
 
 ```powershell
 python -m unittest discover -s tests -v
