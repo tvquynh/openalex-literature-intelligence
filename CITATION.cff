@@ -10,6 +10,14 @@ authors:
 version: 3.0.5
 date-released: "2026-10-25"
 license: MIT
+doi: 10.5281/zenodo.23680134
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23680134
+    description: Concept DOI (all versions)
+  - type: doi
+    value: 10.5281/zenodo.23680135
+    description: DOI for version 3.0.5
 repository-code: "https://github.com/tvquynh/openalex-literature-intelligence"
 abstract: >-
   Command-line tool that builds an auditable literature corpus: OpenAlex discovery,

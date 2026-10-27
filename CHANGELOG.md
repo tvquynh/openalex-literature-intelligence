@@ -1,7 +1,7 @@
 # Changelog
 
 ## 3.0.5 - 2026-10-27 (GitHub publication)
-First public repository. Code unchanged from the 3.0.5 Stable release (every `.py`, `.ps1`, `.txt` and `.json` file is byte-identical). Documentation reorganized: English `README.md`, full user guide in `docs/USER_GUIDE.md` and `docs/OpenAlex_Literature_Intelligence_v3.0.5_User_Guide.docx`, Vietnamese README and quick start moved to `docs/`, English `SECURITY.md`, `LICENSE` (MIT) and `CITATION.cff` added. The mirror-operator notes (`SERVER_MANIFEST_UPDATE_REQUIRED.md`, `manifest_patch_example.json`) are not part of the public repository.
+First public repository. Code unchanged from the 3.0.5 Stable release (every `.py`, `.ps1`, `.txt` and `.json` file is byte-identical). Documentation reorganized: English `README.md`, full user guide in `docs/USER_GUIDE.md` and `docs/OpenAlex_Literature_Intelligence_v3.0.5_User_Guide.docx`, Vietnamese README and quick start moved to `docs/`, English `SECURITY.md`, `LICENSE` (MIT) and `CITATION.cff` added. The mirror-operator notes (`SERVER_MANIFEST_UPDATE_REQUIRED.md`, `manifest_patch_example.json`) are not part of the public repository. Archived on Zenodo: concept DOI 10.5281/zenodo.23680134, v3.0.5 DOI 10.5281/zenodo.23680135.
 
 ## 3.0.5 - 2026-10-25 (Stable)
 Stable release; code identical to the independently reviewed 3.0.5 candidate (52/52 unit, 96/96 acceptance). Release packaging: `RELEASE_NOTES.md`, examples moved to `examples/`.

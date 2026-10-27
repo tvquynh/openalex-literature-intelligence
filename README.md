@@ -1,6 +1,6 @@
 # OpenAlex Literature Intelligence
 
-![version](https://img.shields.io/badge/version-3.0.5%20Stable-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-52%2F52-brightgreen)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-3.0.5%20Stable-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-52%2F52-brightgreen)
 
 A command-line tool that turns a literature search into an auditable corpus. It finds works in
 [OpenAlex](https://openalex.org/), attaches SCImago venue data (SJR, quartiles, categories, estimated
@@ -160,7 +160,9 @@ local servers with fake keys.
 ## Citation and license
 
 If the tool supports published work, please cite it using [CITATION.cff](CITATION.cff) (GitHub shows it
-under "Cite this repository"). The code is released under the [MIT License](LICENSE). The license covers
+under "Cite this repository"). The software is archived on Zenodo:
+[10.5281/zenodo.23680134](https://doi.org/10.5281/zenodo.23680134) for all versions, and
+[10.5281/zenodo.23680135](https://doi.org/10.5281/zenodo.23680135) for v3.0.5 specifically. The code is released under the [MIT License](LICENSE). The license covers
 the code only; OpenAlex and SCImago data remain under the terms of their providers.
 
 Questions and bug reports are welcome in the
