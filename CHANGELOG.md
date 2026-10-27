@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.3.0 - 2026-10-27
 Clearer handling of papers published after the last SCImago year under a publication-basis quartile filter. Which papers enter the main corpus does not change.
 
 - With `--quartile` and `--quartile-basis publication` (the default basis), a paper published after the last SCImago year whose source is in the latest snapshot (`ranking_basis = LATEST_AVAILABLE`) now gets the exclusion reasons `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE` instead of `QUARTILE_UNAVAILABLE` alone. `QUARTILE_UNAVAILABLE` is kept for compatibility. The latest quartile is still never copied into the publication-year columns, and `LATEST_AVAILABLE` keeps its meaning.

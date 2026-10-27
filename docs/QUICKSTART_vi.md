@@ -1,4 +1,4 @@
-# Quick Start - Windows 11 (OpenAlex Literature Intelligence v3.2.0)
+# Quick Start - Windows 11 (OpenAlex Literature Intelligence v3.3.0)
 
 ```powershell
 git clone https://github.com/tvquynh/openalex-literature-intelligence.git C:\OpenAlexV3

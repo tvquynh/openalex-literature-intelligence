@@ -1,8 +1,8 @@
-# OpenAlex Literature Intelligence v3.2.0: Comprehensive User Guide
+# OpenAlex Literature Intelligence v3.3.0: Comprehensive User Guide
 
 Collect, enrich, screen, and audit scientific literature with OpenAlex and historical SCImago data (2010-2025): SJR, quartiles, source status, estimated APC, and a reproducible audit trail.
 
-Release 3.2.0, 27 October 2026. This Markdown file is generated from [OpenAlex_Literature_Intelligence_User_Guide.docx](OpenAlex_Literature_Intelligence_User_Guide.docx); both have the same content.
+Release 3.3.0, 27 October 2026. This Markdown file is generated from [OpenAlex_Literature_Intelligence_User_Guide.docx](OpenAlex_Literature_Intelligence_User_Guide.docx); both have the same content.
 
 ## Contents
 
@@ -1293,7 +1293,7 @@ The first command is a pilot that tries 20 papers; the second processes the whol
 
 ### G.1. How requests are made
 
-- Requests are sent one at a time, at least --delay seconds apart for the same host (default 2 s, minimum 1 s), with the User-Agent OpenAlexLiteratureIntelligence/3.2.0 and a link to the project repository.
+- Requests are sent one at a time, at least --delay seconds apart for the same host (default 2 s, minimum 1 s), with the User-Agent OpenAlexLiteratureIntelligence/3.3.0 and a link to the project repository.
 - robots.txt is read once per host and run, following redirects, with RFC 9309 matching (longest rule wins, \* and $ wildcards). A path it disallows is never requested (ROBOTS_DISALLOWED), a Crawl-delay longer than --delay is honoured (up to 60 s), and a host whose robots.txt cannot be read is skipped for that run (ROBOTS_UNREACHABLE).
 - Redirects are followed one hop at a time, so a link through doi.org never reaches a host that is already blocked.
 - A response is kept only if it is a complete PDF (it starts with %PDF- and ends with %%EOF) of at most --max-mb megabytes (default 100); a cut-off file is discarded (TRUNCATED) and tried again on the next run.

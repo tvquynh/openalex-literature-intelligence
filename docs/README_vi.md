@@ -1,8 +1,8 @@
-# OpenAlex Literature Intelligence v3.2.0
+# OpenAlex Literature Intelligence v3.3.0
 
-> Bản tiếng Việt của README. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Các tính năng có từ v3.1.0 đến v3.2.0 được hướng dẫn ở các mục 15 đến 18 của phần "Các lệnh chính": chọn chỗ khớp query (`--search-field`), cờ bài bị rút và số trích dẫn chuẩn hóa, tầng nguồn công bố (`--venue-tiers`), tải toàn văn truy cập mở (`fetch-oa`).
+> Bản tiếng Việt của README. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Các tính năng có từ v3.1.0 đến v3.2.0 được hướng dẫn ở các mục 15 đến 18 của phần "Các lệnh chính": chọn chỗ khớp query (`--search-field`), cờ bài bị rút và số trích dẫn chuẩn hóa, tầng nguồn công bố (`--venue-tiers`), tải toàn văn truy cập mở (`fetch-oa`). Từ v3.3.0, khi lọc quartile theo năm xuất bản, công cụ báo rõ các paper mới hơn dữ liệu SCImago (mục 5).
 
-Phiên bản: **3.2.0** · Ngày phát hành: 2026-10-27 · Bản ổn định trước: 3.0.5 (2026-10-25) · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
+Phiên bản: **3.3.0** · Ngày phát hành: 2026-10-27 · Bản ổn định trước: 3.0.5 (2026-10-25) · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
 
 ## Công cụ làm gì (What does the tool do?)
 

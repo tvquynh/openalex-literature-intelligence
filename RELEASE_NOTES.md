@@ -1,10 +1,15 @@
 # Release notes - OpenAlex Literature Intelligence
 
-- **Version:** 3.2.0
+- **Version:** 3.3.0
 - **Release date:** 2026-10-27
 - **Previous stable release:** 3.0.5 (2026-10-25)
 
 OpenAlex Literature Intelligence finds literature in OpenAlex and enriches each venue with historical and latest SCImago data (SJR, quartiles, categories, estimated APC). It then screens a main corpus and keeps a full audit trail. See `README.md` for usage and `CHANGELOG.md` for every change.
+
+## New in 3.3.0: papers newer than the SCImago data
+- With `--quartile` and `--quartile-basis publication` (the default basis), a paper published after the last SCImago year has no publication-year quartile and fails the filter, as before. When its source is in the latest snapshot, its exclusion reasons now read `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE`.
+- `run` and `enrich` print a warning with the number of such papers, and `summary.json` always contains `quartile_filter_diagnostics`.
+- The main corpus does not change, and the latest quartile is never used as a publication-year quartile; `--quartile-basis latest` screens such papers by the latest available snapshot.
 
 ## New in 3.2.0: search field
 - `run --search-field title_and_abstract` (or `run.search_field` in `config.json`) matches queries against titles and abstracts only, through the OpenAlex `title_and_abstract.search` filter. The default, `search`, keeps the earlier behaviour, which also matches full text where OpenAlex has it.

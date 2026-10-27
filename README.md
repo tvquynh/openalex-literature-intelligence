@@ -1,6 +1,6 @@
 # OpenAlex Literature Intelligence
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-3.2.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-81%2F81-brightgreen)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-3.3.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-81%2F81-brightgreen)
 
 A command-line tool that turns a literature search into an auditable corpus. It finds works in
 [OpenAlex](https://openalex.org/), attaches SCImago venue data (SJR, quartiles, categories, estimated
