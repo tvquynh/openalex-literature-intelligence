@@ -117,7 +117,7 @@ def apply_main_policy(
     include_historical_only: bool = False,
     source_types: Optional[List[str]] = None,
     quartiles: Optional[List[str]] = None,
-    quartile_basis: str = "publication",
+    quartile_basis: str = "latest",
     quartile_mode: str = "best",
     max_apc: Optional[float] = None,
     require_doaj: bool = False,
@@ -133,7 +133,7 @@ def apply_main_policy(
     )
     # Allowed SCImago statuses for the main corpus. --include-historical-only adds HISTORICAL_ONLY;
     # before v3.0.4 it removed the status filter entirely, which also admitted UNMATCHED/AMBIGUOUS
-    # rows. That broad behaviour is now explicit: --any-source-status.
+    # rows. That broad behavior is now explicit: --any-source-status.
     if any_source_status or not default_require_latest:
         allowed_statuses: Optional[set] = None
     elif include_historical_only:
@@ -365,7 +365,7 @@ def quartile_filter_diagnostics(
     excluded: List[Dict[str, Any]],
     manifest: Dict[str, Any],
     quartiles: Optional[List[str]] = None,
-    quartile_basis: str = "publication",
+    quartile_basis: str = "latest",
     quartile_mode: str = "best",
     **_other_policy: Any,
 ) -> Dict[str, Any]:

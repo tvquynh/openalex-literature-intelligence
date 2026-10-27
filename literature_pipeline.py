@@ -93,7 +93,7 @@ def add_policy_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help=(
             "Do not filter the main corpus by SCImago source status at all (also admits UNMATCHED and AMBIGUOUS); "
-            "this was the behaviour of --include-historical-only before v3.0.4"
+            "this was the behavior of --include-historical-only before v3.0.4"
         ),
     )
     parser.add_argument(
@@ -120,8 +120,12 @@ def add_policy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--quartile-basis",
         choices=["publication", "latest"],
-        default="publication",
-        help="Use publication-year or latest snapshot quartile for --quartile filtering",
+        default="latest",
+        help=(
+            "Quartile used by --quartile: latest (default; the venue's quartile in the latest SCImago snapshot, also for "
+            "papers published after it) or publication (the quartile of the paper's publication year, which papers "
+            "newer than the SCImago data do not have)"
+        ),
     )
     parser.add_argument(
         "--quartile-mode",
@@ -204,8 +208,8 @@ def print_quartile_warning(summary: Dict[str, Any]) -> None:
     subject, them, their = ((f"1 paper published after {last} has", "it", "its") if count == 1
                             else (f"{count:,} papers published after {last} have", "them", "their"))
     print(f"  WARNING: SCImago data ends at {last}. {subject} no publication-year quartile and "
-          f"failed the current quartile filter ({FUTURE_YEAR_QUARTILE_REASON}). Use --quartile-basis latest if you "
-          f"intentionally want to screen {them} using the latest available SCImago snapshot (not a quartile of {their} "
+          f"failed the current quartile filter ({FUTURE_YEAR_QUARTILE_REASON}). Use --quartile-basis latest (the "
+          f"default) to screen {them} using the latest available SCImago snapshot (not a quartile of {their} "
           "publication year).")
 
 

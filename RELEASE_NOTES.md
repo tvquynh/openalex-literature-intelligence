@@ -1,18 +1,23 @@
 # Release notes - OpenAlex Literature Intelligence
 
-- **Version:** 3.3.0
-- **Release date:** 2026-10-27
+- **Version:** 4.0.0
+- **Release date:** 2026-10-28
 - **Previous stable release:** 3.0.5 (2026-10-25)
 
 OpenAlex Literature Intelligence finds literature in OpenAlex and enriches each venue with historical and latest SCImago data (SJR, quartiles, categories, estimated APC). It then screens a main corpus and keeps a full audit trail. See `README.md` for usage and `CHANGELOG.md` for every change.
 
+## Changed in 4.0.0: default quartile basis
+- `--quartile` without `--quartile-basis` now screens by the venue's quartile in the latest SCImago snapshot (`latest`) instead of the quartile of the publication year (`publication`), so papers newer than the SCImago data are no longer excluded by accident.
+- With the latest basis, a 2026 paper is judged by its venue's 2025 quartile, which is not a 2026 quartile, older papers are also judged by their venue's 2025 quartile, and sources found only in earlier snapshots (`HISTORICAL_ONLY`) fail a quartile filter.
+- To keep the 3.x behavior, pass `--quartile-basis publication`. The library functions `apply_main_policy` and `quartile_filter_diagnostics` have the same new default.
+
 ## New in 3.3.0: papers newer than the SCImago data
-- With `--quartile` and `--quartile-basis publication` (the default basis), a paper published after the last SCImago year has no publication-year quartile and fails the filter, as before. When its source is in the latest snapshot, its exclusion reasons now read `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE`.
+- With `--quartile` and `--quartile-basis publication` (then the default basis), a paper published after the last SCImago year has no publication-year quartile and fails the filter, as before. When its source is in the latest snapshot, its exclusion reasons now read `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE`.
 - `run` and `enrich` print a warning with the number of such papers, and `summary.json` always contains `quartile_filter_diagnostics`.
 - The main corpus does not change, and the latest quartile is never used as a publication-year quartile; `--quartile-basis latest` screens such papers by the latest available snapshot.
 
 ## New in 3.2.0: search field
-- `run --search-field title_and_abstract` (or `run.search_field` in `config.json`) matches queries against titles and abstracts only, through the OpenAlex `title_and_abstract.search` filter. The default, `search`, keeps the earlier behaviour, which also matches full text where OpenAlex has it.
+- `run --search-field title_and_abstract` (or `run.search_field` in `config.json`) matches queries against titles and abstracts only, through the OpenAlex `title_and_abstract.search` filter. The default, `search`, keeps the earlier behavior, which also matches full text where OpenAlex has it.
 - In a live check, one query matched 3,124 works with `search` and 228 with `title_and_abstract`.
 - A `title_and_abstract` query may not contain `,` or `|`; such a query is refused before any request. The field is recorded in the run metadata, the summary and the checkpoint.
 

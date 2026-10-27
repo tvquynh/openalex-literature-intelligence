@@ -1,8 +1,8 @@
-# OpenAlex Literature Intelligence v3.3.0: Comprehensive User Guide
+# OpenAlex Literature Intelligence v4.0.0: Comprehensive User Guide
 
 Collect, enrich, screen, and audit scientific literature with OpenAlex and historical SCImago data (2010-2025): SJR, quartiles, source status, estimated APC, and a reproducible audit trail.
 
-Release 3.3.0, 27 October 2026. This Markdown file is generated from [OpenAlex_Literature_Intelligence_User_Guide.docx](OpenAlex_Literature_Intelligence_User_Guide.docx); both have the same content.
+Release 4.0.0, 28 October 2026. This Markdown file is generated from [OpenAlex_Literature_Intelligence_User_Guide.docx](OpenAlex_Literature_Intelligence_User_Guide.docx); both have the same content.
 
 ## Contents
 
@@ -587,7 +587,7 @@ python literature_pipeline.py run `
   --output PE_Malware_Q1_Q2
 ```
 
-The publication basis, the default, screens each paper by the quartile of the year it was published. The SCImago data end at 2025, so a 2026 paper has no publication-year quartile and fails a publication-basis Q1/Q2 filter; the tool never copies the 2025 quartile into the publication-year columns. When the source is in the latest snapshot (ranking_basis LATEST_AVAILABLE), the exclusion reasons are QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE, run and enrich print a warning with the number of such papers, and summary.json counts them under quartile_filter_diagnostics (0 when no paper is affected). --quartile-basis latest (section 11.5) screens these papers by the latest available snapshot, which for a 2026 paper is the 2025 quartile of its venue, not a 2026 quartile.
+The publication basis screens each paper by the quartile of the year it was published, which suits historical analyses; up to v3.3.0 it was the default, and the example therefore names it explicitly. The SCImago data end at 2025, so a 2026 paper has no publication-year quartile and fails a publication-basis Q1/Q2 filter; the tool never copies the 2025 quartile into the publication-year columns. When the source is in the latest snapshot (ranking_basis LATEST_AVAILABLE), the exclusion reasons are QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE, run and enrich print a warning with the number of such papers, and summary.json counts them under quartile_filter_diagnostics (0 when no paper is affected). The default basis, latest (section 11.5), screens these papers by the latest available snapshot, which for a 2026 paper is the 2025 quartile of its venue, not a 2026 quartile.
 
 ### 11.5. Latest quartile
 
@@ -599,6 +599,8 @@ python literature_pipeline.py run `
   --quartile-basis latest `
   --output malware_latest_q1q2
 ```
+
+latest is the default basis: --quartile without --quartile-basis screens every paper by its venue's quartile in the latest SCImago snapshot, so the newest papers are not excluded by accident. For a 2026 paper that is the 2025 quartile of its venue, not a 2026 quartile, and an older paper is also judged by its venue's 2025 quartile rather than by the quartile of its publication year. Sources found only in earlier snapshots (HISTORICAL_ONLY, admitted with --include-historical-only) have no latest quartile and fail a quartile filter on this basis; use --quartile-basis publication for them.
 
 ### 11.6. Relevant-category quartile
 
@@ -912,7 +914,7 @@ The mirror operator adds the new annual file, updates manifest first_year/last_y
 | Very high UNMATCHED | Inspect source_audit.csv and source_class; repositories/conferences/ebooks often do not fit journal policy. |
 | ISSN_CONFLICT | Review candidates manually; the tool intentionally rejects title-only matching when identifiers contradict. |
 | 2026 paper has no publication-year Q | Correct design while latest SCImago is 2025; latest metadata may still be available. |
-| Q1/Q2 publication filter removes 2026 papers | Expected: such papers get QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE, and run and enrich print a warning with their number. Use --quartile-basis latest if your question concerns the latest quartile, which is not a 2026 quartile. |
+| Q1/Q2 publication filter removes 2026 papers | Expected: such papers get QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE, and run and enrich print a warning with their number. Use --quartile-basis latest (the default) if your question concerns the latest quartile, which is not a 2026 quartile. |
 | APC filter excludes too much | APC_UNAVAILABLE means the snapshot has no estimate, not that the journal is necessarily expensive. |
 | Checkpoint parameters changed | The year range or abstract setting of a query changed under the same output prefix; use a new prefix or --no-resume. |
 | Conference absent in one annual file | Do not infer discontinuation; SCImago conference coverage varies strongly by year. |
@@ -978,7 +980,7 @@ The mirror operator adds the new annual file, updates manifest first_year/last_y
 | --source-type TYPE | Allowed SCImago source type; repeatable. |
 | --all-source-types | Disable journal-only. |
 | --quartile Q1\|Q2\|Q3\|Q4 | Allowed quartile; repeatable. |
-| --quartile-basis publication\|latest | Choose snapshot basis for Q filtering. |
+| --quartile-basis latest\|publication | Snapshot basis for --quartile filtering; default latest (section 11.5). |
 | --quartile-mode best\|relevant-category | Use Best Quartile or relevant-category quartile. |
 | --relevant-category NAME | Category of interest; repeatable. |
 | --max-apc USD | Maximum estimated APC. |
@@ -1293,7 +1295,7 @@ The first command is a pilot that tries 20 papers; the second processes the whol
 
 ### G.1. How requests are made
 
-- Requests are sent one at a time, at least --delay seconds apart for the same host (default 2 s, minimum 1 s), with the User-Agent OpenAlexLiteratureIntelligence/3.3.0 and a link to the project repository.
+- Requests are sent one at a time, at least --delay seconds apart for the same host (default 2 s, minimum 1 s), with the User-Agent OpenAlexLiteratureIntelligence/4.0.0 and a link to the project repository.
 - robots.txt is read once per host and run, following redirects, with RFC 9309 matching (longest rule wins, \* and $ wildcards). A path it disallows is never requested (ROBOTS_DISALLOWED), a Crawl-delay longer than --delay is honoured (up to 60 s), and a host whose robots.txt cannot be read is skipped for that run (ROBOTS_UNREACHABLE).
 - Redirects are followed one hop at a time, so a link through doi.org never reaches a host that is already blocked.
 - A response is kept only if it is a complete PDF (it starts with %PDF- and ends with %%EOF) of at most --max-mb megabytes (default 100); a cut-off file is discarded (TRUNCATED) and tried again on the next run.
@@ -1383,7 +1385,7 @@ python literature_pipeline.py enrich --input thesis_literature_raw.jsonl --outpu
 
 Since v3.2.0, run can send each query to OpenAlex in two ways. The choice changes which works are returned, so record it in your protocol; the tool writes it to the run metadata, the summary and the checkpoint.
 
-- search, the default and the only behaviour before v3.2.0: the query goes to the OpenAlex search parameter, which matches the title, the abstract and, for works whose full text OpenAlex has indexed, the full text.
+- search, the default and the only behavior before v3.2.0: the query goes to the OpenAlex search parameter, which matches the title, the abstract and, for works whose full text OpenAlex has indexed, the full text.
 - title_and_abstract: the query goes to the title_and_abstract.search filter, which matches the title and the abstract only.
 
 ### I.1. Effect on the result set

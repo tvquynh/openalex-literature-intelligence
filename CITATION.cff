@@ -7,8 +7,8 @@ authors:
     given-names: Van-Quynh
     orcid: "https://orcid.org/0009-0006-0514-6123"
     affiliation: Posts and Telecommunications Institute of Technology (PTIT)
-version: 3.3.0
-date-released: "2026-10-27"
+version: 4.0.0
+date-released: "2026-10-28"
 license: MIT
 doi: 10.5281/zenodo.23680134
 identifiers:

@@ -1,8 +1,8 @@
-# OpenAlex Literature Intelligence v3.3.0
+# OpenAlex Literature Intelligence v4.0.0
 
-> Bản tiếng Việt của README. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Các tính năng có từ v3.1.0 đến v3.2.0 được hướng dẫn ở các mục 15 đến 18 của phần "Các lệnh chính": chọn chỗ khớp query (`--search-field`), cờ bài bị rút và số trích dẫn chuẩn hóa, tầng nguồn công bố (`--venue-tiers`), tải toàn văn truy cập mở (`fetch-oa`). Từ v3.3.0, khi lọc quartile theo năm xuất bản, công cụ báo rõ các paper mới hơn dữ liệu SCImago (mục 5).
+> Bản tiếng Việt của README. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Các tính năng có từ v3.1.0 đến v3.2.0 được hướng dẫn ở các mục 15 đến 18 của phần "Các lệnh chính": chọn chỗ khớp query (`--search-field`), cờ bài bị rút và số trích dẫn chuẩn hóa, tầng nguồn công bố (`--venue-tiers`), tải toàn văn truy cập mở (`fetch-oa`). Từ v3.3.0, khi lọc quartile theo năm xuất bản, công cụ báo rõ các paper mới hơn dữ liệu SCImago (mục 5). Từ v4.0.0, `--quartile` mặc định lọc theo quartile của snapshot SCImago mới nhất (`--quartile-basis latest`, mục 5).
 
-Phiên bản: **3.3.0** · Ngày phát hành: 2026-10-27 · Bản ổn định trước: 3.0.5 (2026-10-25) · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
+Phiên bản: **4.0.0** · Ngày phát hành: 2026-10-28 · Bản ổn định trước: 3.0.5 (2026-10-25) · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
 
 ## Công cụ làm gì (What does the tool do?)
 
@@ -270,17 +270,17 @@ python literature_pipeline.py run `
   --output PE_Malware_Q1_Q2
 ```
 
-Lưu ý về paper mới hơn dữ liệu SCImago. Với `--quartile-basis publication` (mặc định), mỗi paper được lọc theo quartile của đúng năm xuất bản. Dữ liệu SCImago hiện chỉ đến năm 2025, nên paper năm 2026 không có quartile năm xuất bản (`best_quartile_at_publication` để trống) và không qua filter Q1/Q2 theo cách này. Công cụ không bao giờ chép quartile năm 2025 sang các cột năm xuất bản.
+Ví dụ trên ghi rõ `--quartile-basis publication`, vì mặc định đã đổi. Khi không ghi tùy chọn này, `--quartile` dùng basis `latest`: mỗi paper được lọc theo quartile của nguồn công bố trong snapshot SCImago mới nhất, nên các paper mới nhất không bị loại một cách vô tình. Paper năm 2026 được giữ khi nguồn của nó thuộc quartile đã chọn trong snapshot 2025; đó là quartile năm 2025 của nguồn, không phải quartile năm 2026. Paper cũ hơn cũng được xét theo quartile năm 2025 của nguồn, không theo quartile ở năm xuất bản. Nguồn chỉ có trong các snapshot cũ (`HISTORICAL_ONLY`, được nhận khi dùng `--include-historical-only`) không có quartile mới nhất nên không qua filter quartile theo basis này. Đến v3.3.0, mặc định là `publication`; muốn giữ cách cũ thì ghi rõ `--quartile-basis publication`.
 
-Khi nguồn của paper có trong snapshot mới nhất (`ranking_basis = LATEST_AVAILABLE`), cột `main_exclusion_reasons` ghi `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE` để chỉ rõ nguyên nhân, `run` và `enrich` in cảnh báo kèm số paper bị ảnh hưởng:
+Với `--quartile-basis publication`, mỗi paper được lọc theo quartile của đúng năm xuất bản, phù hợp với phân tích lịch sử. Dữ liệu SCImago hiện chỉ đến năm 2025, nên paper năm 2026 không có quartile năm xuất bản (`best_quartile_at_publication` để trống) và không qua filter Q1/Q2 theo cách này. Công cụ không bao giờ chép quartile năm 2025 sang các cột năm xuất bản. Khi nguồn của paper có trong snapshot mới nhất (`ranking_basis = LATEST_AVAILABLE`), cột `main_exclusion_reasons` ghi `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE` để chỉ rõ nguyên nhân, và `run`, `enrich` in cảnh báo kèm số paper bị ảnh hưởng:
 
 ```text
-WARNING: SCImago data ends at 2025. 12 papers published after 2025 have no publication-year quartile and failed the current quartile filter (QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE). Use --quartile-basis latest if you intentionally want to screen them using the latest available SCImago snapshot (not a quartile of their publication year).
+WARNING: SCImago data ends at 2025. 12 papers published after 2025 have no publication-year quartile and failed the current quartile filter (QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE). Use --quartile-basis latest (the default) to screen them using the latest available SCImago snapshot (not a quartile of their publication year).
 ```
 
-`_summary.json` luôn có mục `quartile_filter_diagnostics` (danh sách quartile đang lọc, basis, mode, `scimago_latest_year` và `future_year_papers_without_publication_quartile`); số paper bị ảnh hưởng bằng 0 khi không có `--quartile` hoặc khi dùng `--quartile-basis latest`. Kết quả sàng lọc không đổi: chỉ thêm lý do loại chính xác hơn.
+`_summary.json` luôn có mục `quartile_filter_diagnostics` (danh sách quartile đang lọc, basis, mode, `scimago_latest_year` và `future_year_papers_without_publication_quartile`); số paper bị ảnh hưởng bằng 0 khi không có `--quartile` hoặc khi dùng basis `latest`.
 
-Nếu muốn lọc các paper này bằng snapshot mới nhất, dùng `--quartile-basis latest`. Khi đó paper năm 2026 được lọc theo quartile năm 2025 của nguồn công bố, không phải quartile năm 2026. Ví dụ, chạy `enrich` trên 100 paper của một query 2010-2026 với `--all-source-types --quartile Q1 --quartile Q2`: 36 paper năm 2026, trong đó 12 paper thuộc nguồn có trong snapshot 2025; main corpus có 13 paper theo publication basis và 22 paper theo latest basis.
+Ví dụ, chạy `enrich` trên 100 paper của một query 2010-2026 với `--all-source-types --quartile Q1 --quartile Q2`: có 36 paper năm 2026, trong đó 12 paper thuộc nguồn có trong snapshot 2025. Main corpus có 22 paper với basis mặc định `latest` và 13 paper với `--quartile-basis publication`.
 
 ## 6. Lọc Q1/Q2 theo relevant category
 

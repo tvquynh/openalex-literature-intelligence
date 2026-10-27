@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.0.0 - 2026-10-28
+Behavior change: the default `--quartile-basis` is now `latest`, so a quartile filter no longer drops the newest papers by accident.
+
+- `--quartile` without `--quartile-basis` (in `run` and `enrich`) screens every paper by its venue's quartile in the latest SCImago snapshot. A paper published after the SCImago data is kept when its venue qualifies; that quartile is the venue's latest one, not a quartile of the publication year, and the publication-year columns stay empty. Older papers are also judged by their venue's latest quartile. Sources found only in earlier snapshots (`HISTORICAL_ONLY`) have no latest quartile and fail a quartile filter on this basis.
+- Up to 3.3.0 the default was `publication`. Pass `--quartile-basis publication` to keep that behavior; the extra reason `QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE`, the warning and `quartile_filter_diagnostics` work as before with that basis. The library functions `apply_main_policy` and `quartile_filter_diagnostics` use the same new default.
+- The warning now names latest as the default. Runs without `--quartile`, and runs that set `--quartile-basis` explicitly, write the same corpus files as 3.3.0; without `--quartile-basis`, `summary.json` and `run_metadata.json` now record `latest` as the basis.
+- On 100 real records with `--all-source-types --quartile Q1 --quartile Q2`, the main corpus has 22 papers with the new default and 13 with `--quartile-basis publication`, as with 3.3.0 when each basis is given explicitly.
+- Tests that relied on the old default now set `--quartile-basis publication` explicitly; new assertions check the default in the library, in `enrich` and in `run`. Each was checked against reverting the default. 81 tests in total.
+- Documentation: README, `docs/README_vi.md` and the user guide describe latest as the default and when to choose the publication basis. "behaviour" is spelled "behavior" throughout.
+
 ## 3.3.0 - 2026-10-27
 Clearer handling of papers published after the last SCImago year under a publication-basis quartile filter. Which papers enter the main corpus does not change.
 
@@ -80,7 +90,7 @@ Configuration (new standard layout):
 - `HISTORICAL_ONLY` now follows the manifest definition (matched in any snapshot earlier than latest, absent from latest). v3.0.3 only checked the publication-year snapshot, so papers from 2026, from years where the source is absent, or without a year were `UNMATCHED` even though `inspect-source` said `HISTORICAL_ONLY`. New fields: `historical_match_method`, `historical_match_candidates`, `historical_snapshot_years`, `scimago_type_historical`.
 - A Sourceid found through history that is still present in the latest snapshot is `ACTIVE_LATEST` (`SOURCEID_VIA_*` methods), never `HISTORICAL_ONLY`.
 - Future publication years: `ranking_basis = LATEST_AVAILABLE` only for `ACTIVE_LATEST` rows; other rows are `UNAVAILABLE` (v3.0.3 labelled unmatched 2026 papers `LATEST_AVAILABLE`). Rows without a valid year now get `UNAVAILABLE` explicitly.
-- `--include-historical-only` now admits exactly ACTIVE_LATEST + HISTORICAL_ONLY to the main corpus, as its name and README section 9 describe. Previously it removed the status filter, so UNMATCHED and AMBIGUOUS rows also entered main (reference corpus: 52 papers instead of 26). The old behaviour is available explicitly as `--any-source-status`.
+- `--include-historical-only` now admits exactly ACTIVE_LATEST + HISTORICAL_ONLY to the main corpus, as its name and README section 9 describe. Previously it removed the status filter, so UNMATCHED and AMBIGUOUS rows also entered main (reference corpus: 52 papers instead of 26). The old behavior is available explicitly as `--any-source-status`.
 - SCImago `-` quartile placeholder is stored as blank (unavailable); summary distinguishes `NOT_ASSIGNED` from `UNAVAILABLE`; quartile filters report `QUARTILE_UNAVAILABLE`.
 - `--relevant-category` uses exact (case/punctuation-insensitive) category matching instead of substring matching.
 - New lowest-priority match rule `TITLE_STATUS_NORMALIZED` (ignores SCImago "(discontinued)"/"(ceased)" title labels), shared by enrichment and `inspect-source`.

@@ -200,7 +200,8 @@ class TestEnrichment(RepoCase):
         rows, out = self.enrich()
         self.assertEqual(rows["p02"]["best_quartile_at_publication"], "")
         self.assertEqual(rows["p02"]["ranking_basis"], "EXACT_PUBLICATION_YEAR")
-        main, excluded = apply_main_policy(out, self.manifest, source_types=["journal"], quartiles=["Q1"])
+        main, excluded = apply_main_policy(out, self.manifest, source_types=["journal"], quartiles=["Q1"],
+                                           quartile_basis="publication")
         self.assertIn("QUARTILE_UNAVAILABLE", rows["p02"]["main_exclusion_reasons"])
         summary = build_summary(out, main, excluded)
         self.assertNotIn("-", summary["publication_quartile_counts"])
@@ -1591,12 +1592,13 @@ class TestFutureYearQuartile(RepoCase):
             self.assertEqual(diag["future_year_papers_without_publication_quartile"], 1)
 
     def test_b_same_paper_passes_with_latest_basis(self):
-        main, _, diag = self.screen([screened_row("p2026", 2026)], quartiles=["Q1"], quartile_basis="latest")
-        self.assertEqual([(r["openalex_id"], r["main_exclusion_reasons"]) for r in main], [("p2026", "")])
-        self.assertEqual(diag["future_year_papers_without_publication_quartile"], 0)
+        for policy in ({"quartile_basis": "latest"}, {}):  # latest is also the default basis
+            main, _, diag = self.screen([screened_row("p2026", 2026)], quartiles=["Q1"], **policy)
+            self.assertEqual([(r["openalex_id"], r["main_exclusion_reasons"]) for r in main], [("p2026", "")], policy)
+            self.assertEqual((diag["future_year_papers_without_publication_quartile"], diag["basis"]), (0, "latest"))
 
     def test_c_publication_year_within_scimago_passes_normally(self):
-        main, _, diag = self.screen([screened_row("p2025", 2025, q_pub="Q1")], quartiles=["Q1"])
+        main, _, diag = self.screen([screened_row("p2025", 2025, q_pub="Q1")], quartiles=["Q1"], quartile_basis="publication")
         self.assertEqual([(r["openalex_id"], r["main_exclusion_reasons"]) for r in main], [("p2025", "")])
         self.assertEqual((diag["future_year_papers_without_publication_quartile"], diag["scimago_latest_year"]), (0, 2025))
 
@@ -1604,7 +1606,8 @@ class TestFutureYearQuartile(RepoCase):
         rows = [screened_row("a", 2026), screened_row("b", 2026, q_latest="Q2"), screened_row("c", 2027, q_latest=""),
                 screened_row("d", 2026, status="HISTORICAL_ONLY", basis="UNAVAILABLE", q_latest=""),
                 screened_row("e", 2025, q_pub="Q3"), screened_row("f", 2024)]
-        main, excluded, diag = self.screen([dict(r) for r in rows], quartiles=["Q1"], include_historical_only=True)
+        main, excluded, diag = self.screen([dict(r) for r in rows], quartiles=["Q1"], quartile_basis="publication",
+                                           include_historical_only=True)
         reasons = {r["openalex_id"]: r["main_exclusion_reasons"] for r in excluded}
         self.assertEqual(main, [])
         self.assertEqual(diag, {"quartile_filter": ["Q1"], "basis": "publication", "mode": "best",
@@ -1617,7 +1620,7 @@ class TestFutureYearQuartile(RepoCase):
             _, _, diag = self.screen([dict(r) for r in rows], include_historical_only=True, **policy)
             self.assertEqual(diag["future_year_papers_without_publication_quartile"], 0, policy)
 
-    def test_d_cli_warns_only_for_a_publication_basis_quartile_filter(self):
+    def test_d_cli_default_is_latest_and_warns_only_for_publication_basis(self):
         tmp = Path(self.tmp.name)
         src = tmp / "in.csv"
         rows = corpus()
@@ -1627,8 +1630,8 @@ class TestFutureYearQuartile(RepoCase):
             writer.writerows(rows)
         proj = make_project_copy(tmp)
         runs = {}
-        for name, extra in (("none", []), ("pub", ["--quartile", "Q1"]),
-                            ("latest", ["--quartile", "Q1", "--quartile-basis", "latest"])):
+        for name, extra in (("none", []), ("pub", ["--quartile", "Q1", "--quartile-basis", "publication"]),
+                            ("default", ["--quartile", "Q1"])):
             code, out, err = run_cli(proj, ["enrich", "--offline", "--cache-dir", str(self.dir), "--input", str(src),
                                             "--output", str(tmp / name)] + extra)
             self.assertEqual(code, 0, err)
@@ -1642,17 +1645,21 @@ class TestFutureYearQuartile(RepoCase):
         self.assertEqual(sorted(k for k, r in enriched.items() if FUTURE_YEAR_QUARTILE_REASON in r["main_exclusion_reasons"]),
                          ["p03", "p13"])
         self.assertEqual(enriched["p03"]["best_quartile_at_publication"], "")
-        for name in ("none", "latest"):
+        for name in ("none", "default"):
             out, diag, enriched = runs[name]
             self.assertNotIn("SCImago data ends at", out)
             self.assertEqual(diag["future_year_papers_without_publication_quartile"], 0)
             self.assertFalse(any(FUTURE_YEAR_QUARTILE_REASON in r["main_exclusion_reasons"] for r in enriched.values()))
-        self.assertEqual(runs["latest"][2]["p03"]["main_corpus"], "True")
-        self.assertEqual(runs["none"][1], {"quartile_filter": [], "basis": "publication", "mode": "best",
+        # The default basis is latest: the 2026 paper p03 (latest Q1) is kept, p13 (latest Q3) is not selected.
+        default_rows = runs["default"][2]
+        self.assertEqual(default_rows["p03"]["main_corpus"], "True")
+        self.assertEqual(default_rows["p13"]["main_exclusion_reasons"], "QUARTILE_Q3_NOT_SELECTED")
+        self.assertEqual(runs["none"][1], {"quartile_filter": [], "basis": "latest", "mode": "best",
                                            "scimago_latest_year": 2023, "future_year_papers_without_publication_quartile": 0})
-        meta = json.loads((tmp / "pub_run_metadata.json").read_text(encoding="utf-8"))
-        self.assertEqual((meta["scimago_last_year"], meta["policy"]["quartiles"], meta["policy"]["quartile_basis"]),
-                         (2023, ["Q1"], "publication"))
+        for name, basis in (("pub", "publication"), ("default", "latest")):
+            meta = json.loads((tmp / f"{name}_run_metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual((meta["scimago_last_year"], meta["policy"]["quartiles"], meta["policy"]["quartile_basis"]),
+                             (2023, ["Q1"], basis))
 
     def test_run_prints_the_same_warning(self):
         tmp = Path(self.tmp.name)
@@ -1663,12 +1670,22 @@ class TestFutureYearQuartile(RepoCase):
                    "scimago": {"manifest_url": base_url + "manifest.json", "cache_dir": "cache/scimago"}}
             proj = make_project_copy(tmp, cfg)
             out_prefix = tmp / "run" / "x"
-            code, out, err = run_cli(proj, ["run", "--query", "q", "--quartile", "Q1", "--output", str(out_prefix)])
+            code, out, err = run_cli(proj, ["run", "--query", "q", "--quartile", "Q1", "--quartile-basis", "publication",
+                                            "--output", str(out_prefix)])
+            default_prefix = tmp / "run" / "default"
+            code_default, out_default, err_default = run_cli(proj, ["run", "--query", "q", "--quartile", "Q1",
+                                                                    "--output", str(default_prefix)])
         self.assertEqual(code, 0, err)
         # the three fake OpenAlex works are 2024 papers in Alpha Journal (latest Q1)
         self.assertIn("WARNING: SCImago data ends at 2023. 3 papers published after 2023 have", out)
         summary = json.loads(Path(str(out_prefix) + "_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(summary["quartile_filter_diagnostics"]["future_year_papers_without_publication_quartile"], 3)
+        self.assertEqual(summary["main_corpus_records"], 0)
+        # with the default (latest) basis the same three papers are kept and no warning is printed
+        self.assertEqual(code_default, 0, err_default)
+        self.assertNotIn("SCImago data ends at", out_default)
+        summary = json.loads(Path(str(default_prefix) + "_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual((summary["main_corpus_records"], summary["quartile_filter_diagnostics"]["basis"]), (3, "latest"))
 
 
 if __name__ == "__main__":

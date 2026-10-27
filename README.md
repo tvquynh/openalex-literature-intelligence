@@ -1,6 +1,6 @@
 # OpenAlex Literature Intelligence
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-3.3.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-81%2F81-brightgreen)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-4.0.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-81%2F81-brightgreen)
 
 A command-line tool that turns a literature search into an auditable corpus. It finds works in
 [OpenAlex](https://openalex.org/), attaches SCImago venue data (SJR, quartiles, categories, estimated
@@ -109,7 +109,7 @@ Common screening options (for `run` and `enrich`):
 | Option | Effect on the main corpus |
 |---|---|
 | `--quartile Q1 --quartile Q2` | keep the selected quartiles |
-| `--quartile-basis publication` or `latest` | quartile of the publication year (default), or of the latest snapshot; see [Papers newer than the SCImago data](#papers-newer-than-the-scimago-data) |
+| `--quartile-basis latest` or `publication` | quartile of the latest snapshot (default), or of the publication year; see [Quartile basis and papers newer than the SCImago data](#quartile-basis-and-papers-newer-than-the-scimago-data) |
 | `--quartile-mode relevant-category --relevant-category "Software"` | use the quartile of the named categories instead of Best Quartile |
 | `--max-apc 1000` | keep venues with an estimated APC of at most 1000 USD |
 | `--require-doaj`, `--require-cwts-core` | keep sources that OpenAlex lists in DOAJ or in the CWTS Core list |
@@ -122,21 +122,28 @@ Common screening options (for `run` and `enrich`):
 Filters combine with AND. Records that fail a filter go to `_excluded.csv` with the reason, so a
 stricter or looser policy can be applied later with `enrich` without querying OpenAlex again.
 
-### Papers newer than the SCImago data
+### Quartile basis and papers newer than the SCImago data
 
-The publication basis, the default, screens each paper by the quartile of the year it was published.
-The SCImago data end at 2025, so a 2026 paper has no publication-year quartile and fails a quartile
-filter on that basis. The tool never copies the 2025 quartile into the publication-year columns. When the
+By default (`--quartile-basis latest`), `--quartile` screens every paper by its venue's quartile in the
+latest SCImago snapshot, so the newest papers are not lost. A 2026 paper is kept when its venue is in
+the selected quartiles of the 2025 snapshot; that is the venue's 2025 quartile, not a 2026 quartile. An
+older paper is also judged by its venue's 2025 quartile, not by the quartile in its year of
+publication. Sources found only in earlier snapshots (`HISTORICAL_ONLY`, admitted with
+`--include-historical-only`) have no latest quartile and fail a quartile filter on this basis. Up to
+v3.3.0 the default was `publication`; pass `--quartile-basis publication` to keep that behavior.
+
+`--quartile-basis publication` screens each paper by the quartile of the year it was published, which
+suits historical analyses. The SCImago data end at 2025, so a 2026 paper has no publication-year quartile
+and fails the filter; the tool never copies the 2025 quartile into the publication-year columns. When the
 source is in the latest snapshot (`ranking_basis = LATEST_AVAILABLE`), the paper's exclusion reasons are
 `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE`, and `run` and `enrich` print a warning
 with the number of such papers:
 
 ```text
-WARNING: SCImago data ends at 2025. 12 papers published after 2025 have no publication-year quartile and failed the current quartile filter (QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE). Use --quartile-basis latest if you intentionally want to screen them using the latest available SCImago snapshot (not a quartile of their publication year).
+WARNING: SCImago data ends at 2025. 12 papers published after 2025 have no publication-year quartile and failed the current quartile filter (QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE). Use --quartile-basis latest (the default) to screen them using the latest available SCImago snapshot (not a quartile of their publication year).
 ```
 
-`_summary.json` always contains the same count, which is 0 without `--quartile` or with
-`--quartile-basis latest`:
+`_summary.json` always contains this count, which is 0 without `--quartile` or with the latest basis:
 
 ```json
 "quartile_filter_diagnostics": {
@@ -148,11 +155,10 @@ WARNING: SCImago data ends at 2025. 12 papers published after 2025 have no publi
 }
 ```
 
-`--quartile-basis latest` screens every paper by the latest available snapshot. For a 2026 paper that is
-the 2025 quartile of its venue, not a 2026 quartile. The example above comes from `enrich` on 100 papers
-of a 2010-2026 query with `--all-source-types --quartile Q1 --quartile Q2`: 36 were published in 2026,
-12 of them in venues present in the 2025 snapshot, and the main corpus had 13 papers with the
-publication basis and 22 with the latest basis.
+The example above comes from `enrich` on 100 papers of a 2010-2026 query with `--all-source-types
+--quartile Q1 --quartile Q2 --quartile-basis publication`: 36 were published in 2026, 12 of them in venues
+present in the 2025 snapshot, and the main corpus had 13 papers. With the default latest basis, the main
+corpus of the same papers has 22.
 
 ## Outputs
 
