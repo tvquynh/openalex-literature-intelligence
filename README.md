@@ -1,25 +1,29 @@
 # OpenAlex Literature Intelligence
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-3.0.5%20Stable-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-52%2F52-brightgreen)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-3.2.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-75%2F75-brightgreen)
 
 A command-line tool that turns a literature search into an auditable corpus. It finds works in
 [OpenAlex](https://openalex.org/), attaches SCImago venue data (SJR, quartiles, categories, estimated
 APC) both for the year each paper was published and for the latest snapshot, screens a main corpus with
-a policy you declare, and records why every paper was kept or excluded.
+a policy you declare, records why every paper was kept or excluded, and downloads the open-access full
+texts, with a list of the rest to fetch by hand.
 
 ```text
 query -> OpenAlex discovery -> deduplication -> SCImago 2010-2025 enrichment
       -> policy screening -> raw / enriched / main / excluded / audit outputs
+      -> fetch-oa: open-access PDFs + manual-download list
 ```
 
-![OpenAlex Literature Intelligence v3.0.5 workflow: input, core processing, outputs and applications](docs/images/workflow_overview.png)
+![OpenAlex Literature Intelligence workflow: input, core processing, outputs and applications](docs/images/workflow_overview.png)
 
 Workflow overview. The exact output file names are listed under [Outputs](#outputs).
 
 ## What it does
 
 - **Discovery.** One or many OpenAlex queries, cursor paging, resume after interruption, and
-  deduplication by DOI, then OpenAlex ID, then normalized title and year.
+  deduplication by DOI, then OpenAlex ID, then normalized title and year. Queries match the full text
+  where OpenAlex has it, or only titles and abstracts with `--search-field title_and_abstract` (v3.2.0,
+  see [Search field](#search-field)).
 - **Venue enrichment.** Each source is matched to the SCImago snapshots of 2010-2025 by ISSN, then
   ISSN-L, then title. A title match is never accepted when the ISSNs contradict each other.
 - **Publication-year ranking.** SJR, Best Quartile and category quartiles come from the snapshot of the
@@ -29,15 +33,21 @@ Workflow overview. The exact output file names are listed under [Outputs](#outpu
   latest snapshot.
 - **Screening.** The default main corpus is journals with status `ACTIVE_LATEST`. Optional filters:
   quartile (publication-year or latest, Best Quartile or a chosen category), estimated APC ceiling,
-  DOAJ, CWTS Core, source type.
+  DOAJ, CWTS Core, source type, retracted works.
+- **Quality signals and venue tiers (v3.1.0).** Each record keeps the retraction flag and the
+  field-normalized citation measures of OpenAlex, and can be labelled with the tier of its venue from a
+  list you maintain.
 - **Audit trail.** The raw corpus is never overwritten; every excluded paper carries its exclusion
   reasons; a per-source audit, a summary and run metadata (tool version, policy, manifest, environment)
   are written with each run; every SCImago file is verified by SHA-256.
+- **Open-access full text (v3.1.0).** `fetch-oa` downloads the PDFs that OpenAlex lists as open access,
+  politely and sequentially. A host that answers with a bot check is never requested again, and every
+  paper it could not fetch goes to a manual-download list (CSV, HTML, RIS for Zotero).
 
 ## What it does not do
 
 - It does not search Scopus or Web of Science; discovery uses the OpenAlex Works API.
-- It does not download full-text PDFs. OpenAlex open-access links are kept as fields.
+- It does not download subscription full text and never tries to get past a bot check or CAPTCHA.
 - Presence in SCImago is not proof of current Scopus indexing, and absence is not evidence that a
   venue is predatory. The tool never makes either claim.
 - APC values are estimates from a 2025 snapshot, not official publisher prices.
@@ -92,6 +102,7 @@ still read after `config.json` for backward compatibility, but it is deprecated.
 | `run` | OpenAlex discovery, SCImago enrichment, screening and audit outputs | yes |
 | `enrich` | Re-enrich and re-screen an existing OpenAlex CSV/JSONL without querying OpenAlex | no |
 | `inspect-source` | Show one venue's SCImago history by `--title` or `--issn` | no |
+| `fetch-oa` | Download the open-access PDFs of a corpus file and list the rest for manual download | no |
 
 Common screening options (for `run` and `enrich`):
 
@@ -105,6 +116,8 @@ Common screening options (for `run` and `enrich`):
 | `--source-type journal --source-type "conference and proceedings"` | allowed SCImago source types (default: journal) |
 | `--all-source-types` | drop the journal-only default |
 | `--include-historical-only`, `--any-source-status` | also admit `HISTORICAL_ONLY` sources, or disable status filtering |
+| `--exclude-retracted` | drop works that OpenAlex marks as retracted (reason `RETRACTED`) |
+| `--venue-tiers my_venues.tsv` | no effect on the main corpus: adds the tier columns described under [Quality signals and venue tiers](#quality-signals-and-venue-tiers) |
 
 Filters combine with AND. Records that fail a filter go to `_excluded.csv` with the reason, so a
 stricter or looser policy can be applied later with `enrich` without querying OpenAlex again.
@@ -121,8 +134,116 @@ For `--output pilot`:
 | `pilot_excluded.csv` | the other records, with `main_exclusion_reasons` |
 | `pilot_source_audit.csv` | one row per OpenAlex source: status, match method, candidates, paper count |
 | `pilot_summary.json` | counts by status, source class, match method, quartile and ranking basis |
-| `pilot_run_metadata.json` | tool version, queries, policy, manifest and environment; records whether a key was configured, never the key |
+| `pilot_run_metadata.json` | tool version, queries, search field, policy, manifest and environment; records whether a key was configured, never the key |
 | `pilot_checkpoint.json` | cursor and progress per query, used to resume |
+
+## Search field
+
+By default `run` sends each query to the OpenAlex `search` parameter, which matches the title, the
+abstract and, where OpenAlex has indexed it, the full text. From v3.2.0, `--search-field
+title_and_abstract` (or `run.search_field` in `config.json`) sends the query to the
+`title_and_abstract.search` filter instead, so only titles and abstracts are matched.
+
+```bash
+python literature_pipeline.py run --query 'malware AND ("concept drift" OR "temporal drift" OR "dataset shift")' --search-field title_and_abstract --require-abstract --from-year 2010 --to-year 2026 --output drift
+```
+
+On 27 October 2026 this query (2010-2026, abstract required) matched 3,124 works with `search` and 228
+with `title_and_abstract`. All 228 contain the terms in their title or abstract, while 15 of the first 100
+works returned by `search` do not mention malware there. The narrower field also misses relevant papers
+whose titles and abstracts use other words, so compare both fields on a set of papers you already know
+before a large collection.
+
+A `title_and_abstract` query cannot contain `,` or `|`, which separate and combine OpenAlex filter values;
+such a query is refused before any request (join the terms with `OR`). The search field is recorded in
+the run metadata, the summary and the checkpoint. Resuming with a different field stops with an error;
+use `--no-resume` or a new `--output` prefix.
+
+## Quality signals and venue tiers
+
+From v3.1.0, every record that `run` retrieves keeps these OpenAlex fields:
+
+| Column | Meaning |
+|---|---|
+| `is_retracted` | OpenAlex marks the work as retracted |
+| `fwci` | field-weighted citation impact: citations received relative to those expected for works of the same publication year and field |
+| `citation_normalized_percentile` | citation percentile among comparable works (0 to 1) |
+| `citation_top_1_percent`, `citation_top_10_percent` | whether that percentile is in the top 1% or 10% |
+
+OpenAlex computes the citation measures when the query runs (see its documentation for the exact
+definitions), so they change as citations accrue, carry little information for papers from the last year
+or two, and are empty when OpenAlex has not computed them. Records retrieved with an older version lack
+these columns; `enrich` cannot add them, so run `run` again. `--exclude-retracted` moves retracted works to
+`_excluded.csv`; the citation measures are never used as filters.
+
+`--venue-tiers my_venues.tsv` labels each paper with the tier of its venue from a list you write and
+approve. It removes nothing from the main corpus. The list is a tab-separated file (comma-separated if
+its name ends in `.csv`) with one row per venue:
+
+```text
+tier	venue	openalex_source_id	issn	title_exact	title_contains
+A	IEEE Transactions on Information Forensics and Security		1556-6013; 1556-6021
+A	USENIX Security Symposium				usenix security symposium
+```
+
+A venue is recognised by its OpenAlex source ID, then an ISSN, then its whole OpenAlex source name
+(`title_exact`), then a phrase in that name (`title_contains`: whole words, the longest listed phrase
+wins). Names ignore case, punctuation and accents, and `&` counts as `and`. Each ID, ISSN or phrase may
+belong to one venue only, and a malformed list stops the command before any download. Three columns are
+added to the enriched, main, excluded and source-audit files:
+
+- `venue_tier`: your tier, `UNLISTED` when the venue is not in the list, or `AMBIGUOUS` when it matches two
+  listed venues at the same step (fix the list rather than choosing by hand);
+- `venue_tier_venue`: the listed venue, or both venues when ambiguous;
+- `venue_tier_match`: the step that decided (`openalex_source_id`, `issn`, `title_exact`, `title_contains`).
+
+The summary counts papers and sources per tier, and the run metadata records the list's SHA-256. A
+starting point is [examples/venue_tiers_example.tsv](examples/venue_tiers_example.tsv); its tiers are
+examples, not a recommendation. Two facts are worth knowing when you write a list: SCImago assigns no quartile to
+conference proceedings, so a quartile filter cannot rank conferences; and conference papers printed in a
+book series such as Lecture Notes in Computer Science carry the series as their OpenAlex source, so such a
+conference cannot be recognised by name.
+
+## Open-access full text
+
+```bash
+python literature_pipeline.py fetch-oa --input pilot_main.csv --limit 20   # pilot: try 20 papers
+python literature_pipeline.py fetch-oa --input pilot_main.csv              # whole file; rerun at any time
+```
+
+`fetch-oa` reads any `run` or `enrich` output and needs no API key: it uses the `best_oa_pdf_url` and
+`oa_url` columns already in the file, and sends no request to OpenAlex.
+
+- Requests are sequential, at least `--delay` seconds apart per host (default 2, minimum 1, or a longer
+  robots.txt Crawl-delay), with the tool's User-Agent. robots.txt is respected (RFC 9309 matching, redirects
+  followed); a host whose robots.txt cannot be read is skipped for that run.
+- A host that answers with a bot check (a challenge or CAPTCHA page, HTTP 403, or a `tdm-reservation: 1`
+  header) is written at once to `blocked_hosts.json` and receives no further request, in this run or later
+  runs. Redirects are followed one hop at a time, so a link never reaches a blocked host, and hosts that
+  redirect to a bot check are blocked too. The tool never tries to get past a bot check; to try a host
+  again, delete its entry.
+- HTTP 429, a 5xx answer with Retry-After, and repeated network failures only pause a host for the current
+  run. DOI and handle resolvers (doi.org and similar) are never blocked. A resolver that only redirected
+  to a bot check is not paused either, because its next DOI may lead to another publisher; one that
+  answers with a bot check itself is paused for the run.
+- Only complete PDFs (starting with `%PDF-`, ending with `%%EOF`, up to `--max-mb`, default 100 MB) are kept.
+  Progress is saved after every paper, so Ctrl+C or a crash loses nothing.
+
+The output folder (default `pilot_main_fulltext/` next to the input) contains:
+
+| File | Content |
+|---|---|
+| `pdf/<OpenAlex ID>.pdf` | downloaded PDFs |
+| `downloaded.csv` | one row per downloaded paper: file, SHA-256, size, source URL |
+| `manual_download.csv`, `.html`, `.ris` | papers to fetch by hand, with the reason, DOI, landing page, PDF link and the file name to use |
+| `pdf_manual/` | save hand-downloaded PDFs here under that file name; the next run registers them and drops them from the list |
+| `blocked_hosts.json`, `fetch_state.json`, `fetch_log.csv`, `fetch_summary.json` | blocked hosts with the evidence, per-paper state, every request, run counts |
+
+Reasons in the manual list include `NOT_OPEN_ACCESS` (no open copy, for example a subscription journal),
+`BOT_CHECK`, `HOST_BLOCKED`, `ROBOTS_DISALLOWED`, `NOT_PDF` (the link returned a web page), HTTP errors,
+and temporary ones such as `RATE_LIMITED` or `TRUNCATED`. Reruns skip downloaded papers and retry only
+temporary failures, link by link, unless `--retry-failed` is given.
+Open access does not always mean free reuse: check each file's licence before sharing it.
 
 ## SCImago data and the default mirror
 
@@ -141,7 +262,7 @@ OpenAlex. If you redistribute data or derived datasets, check the terms of those
 ## Documentation
 
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md): the complete user guide (also as
-  [Word](docs/OpenAlex_Literature_Intelligence_v3.0.5_User_Guide.docx)): concepts, installation, every
+  [Word](docs/OpenAlex_Literature_Intelligence_User_Guide.docx)): concepts, installation, every
   command and filter, output fields, workflows by research goal, troubleshooting and limitations.
 - [docs/README_vi.md](docs/README_vi.md) and [docs/QUICKSTART_vi.md](docs/QUICKSTART_vi.md):
   Vietnamese README and quick start.
@@ -154,15 +275,16 @@ OpenAlex. If you redistribute data or derived datasets, check the terms of those
 python -m unittest discover -s tests -v
 ```
 
-The 52 tests need neither network access nor an API key: they use a synthetic SCImago repository and
-local servers with fake keys.
+The 75 tests need neither network access nor an API key: they use a synthetic SCImago repository and
+local servers with fake keys and simulated bot checks.
 
 ## Citation and license
 
 If the tool supports published work, please cite it using [CITATION.cff](CITATION.cff) (GitHub shows it
 under "Cite this repository"). The software is archived on Zenodo:
 [10.5281/zenodo.23680134](https://doi.org/10.5281/zenodo.23680134) for all versions, and
-[10.5281/zenodo.23680135](https://doi.org/10.5281/zenodo.23680135) for v3.0.5 specifically. The code is released under the [MIT License](LICENSE). The license covers
+[10.5281/zenodo.23680135](https://doi.org/10.5281/zenodo.23680135) for v3.0.5 specifically. The code is released
+under the [MIT License](LICENSE). The license covers
 the code only; OpenAlex and SCImago data remain under the terms of their providers.
 
 Questions and bug reports are welcome in the

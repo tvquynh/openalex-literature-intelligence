@@ -8,3 +8,5 @@ Run these from the project root (the folder that contains `literature_pipeline.p
 ```
 
 `queries_example.txt` holds one query per line; lines starting with `#` are comments.
+
+`venue_tiers_example.tsv` shows the format of a venue list for `--venue-tiers` (see "Quality signals and venue tiers" in the main README). Its tiers are examples, not a recommendation; write and approve your own list.

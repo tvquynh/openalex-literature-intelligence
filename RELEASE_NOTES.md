@@ -1,10 +1,30 @@
 # Release notes - OpenAlex Literature Intelligence
 
-- **Version:** 3.0.5
-- **Status:** Stable
-- **Release date:** 2026-10-25
+- **Version:** 3.2.0
+- **Release date:** 2026-10-27
+- **Previous stable release:** 3.0.5 (2026-10-25)
 
 OpenAlex Literature Intelligence finds literature in OpenAlex and enriches each venue with historical and latest SCImago data (SJR, quartiles, categories, estimated APC). It then screens a main corpus and keeps a full audit trail. See `README.md` for usage and `CHANGELOG.md` for every change.
+
+## New in 3.2.0: search field
+- `run --search-field title_and_abstract` (or `run.search_field` in `config.json`) matches queries against titles and abstracts only, through the OpenAlex `title_and_abstract.search` filter. The default, `search`, keeps the earlier behaviour, which also matches full text where OpenAlex has it.
+- In a live check, one query matched 3,124 works with `search` and 228 with `title_and_abstract`.
+- A `title_and_abstract` query may not contain `,` or `|`; such a query is refused before any request. The field is recorded in the run metadata, the summary and the checkpoint.
+
+## Fixed in 3.1.1
+- `fetch-oa` no longer pauses doi.org for the whole run when one DOI link leads to a publisher's bot check. The publisher is blocked as before; later DOI links, including those of other publishers, are still tried.
+
+## New in 3.1.0: quality signals and venue tiers
+- `run` keeps the OpenAlex retraction flag (`is_retracted`) and the field-normalized citation measures (`fwci`, `citation_normalized_percentile` with top-1% and top-10% flags) of every work, at no extra request.
+- `--exclude-retracted` removes retracted works from the main corpus, with reason `RETRACTED`.
+- `--venue-tiers <file>` labels each paper with the tier of its venue from a list you maintain (by OpenAlex source ID, ISSN, whole source name or a phrase in it). It adds `venue_tier`, `venue_tier_venue` and `venue_tier_match`, filters nothing, and records the list's SHA-256 in the run metadata. See `examples/venue_tiers_example.tsv`.
+- Without these options, outputs are byte-identical to 3.0.5 apart from three new counts in `summary.json`.
+
+## New in 3.1.0: open-access full text
+- `fetch-oa --input <corpus file>` downloads the PDFs that OpenAlex lists as open access, sequentially, with a per-host delay, the tool's User-Agent and robots.txt respected.
+- A host that answers with a bot check (challenge or CAPTCHA page, HTTP 403, `tdm-reservation: 1`) is never requested again; it is recorded in `blocked_hosts.json` at once. HTTP 429 and busy servers are only paused for the current run; DOI resolvers are never blocked, and are paused only when they answer with a bot check themselves.
+- Everything not downloaded goes to `manual_download.csv`, `.html` and `.ris` with the reason and the file name to use; PDFs saved by hand in `pdf_manual/` are registered on the next run.
+- `fetch-oa` changes nothing in discovery, enrichment or screening.
 
 ## Major fixes and improvements (3.0.3 -> 3.0.5)
 - **ISSN conflict protection:**
@@ -52,6 +72,7 @@ OpenAlex Literature Intelligence finds literature in OpenAlex and enriches each 
 3. 2026 publications use the latest available (2025) metadata, marked `LATEST_AVAILABLE`, not a "2026 quartile".
 4. Conference coverage in SCImago varies substantially across years. A conference missing from one year is not evidence of Scopus discontinuation.
 5. SCImago presence is not identical to official current Scopus status. SCImago absence is not evidence that a venue is predatory.
+6. `fwci` and `citation_normalized_percentile` are computed by OpenAlex at query time and change as citations accrue; a venue tier reflects only the list you give.
 6. APC values are 2025 snapshot estimates, not guaranteed publisher prices.
 7. Strict ISSN conflict protection may prefer false negatives over false-positive venue matches; review `TITLE_MATCH_ISSN_CONFLICT` rows in `source_audit.csv`.
 8. The SCImago mirror repeats the current H-index in every year, so `h_index_at_publication` is not a historical H-index.

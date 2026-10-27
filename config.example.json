@@ -12,6 +12,7 @@
     "from_year": 2010,
     "to_year": 2026,
     "require_abstract": false,
-    "max_per_query": null
+    "max_per_query": null,
+    "search_field": "search"
   }
 }

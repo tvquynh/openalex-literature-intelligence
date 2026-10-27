@@ -1,6 +1,6 @@
 # OpenAlex Literature Intelligence v3.0.5 Stable
 
-> Bản tiếng Việt của README v3.0.5. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository.
+> Bản tiếng Việt của README v3.0.5. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Từ v3.1.0 có thêm lệnh `fetch-oa` tải toàn văn truy cập mở; cách dùng xem mục "Open-access full text" trong README tiếng Anh hoặc Phụ lục G của USER_GUIDE.md. Cũng từ v3.1.0, mỗi bài có thêm cờ bài đã bị rút (`is_retracted`) và số trích dẫn đã chuẩn hóa của OpenAlex (`fwci`, `citation_normalized_percentile`); tùy chọn `--exclude-retracted` loại bài đã bị rút, còn `--venue-tiers <file>` gắn tầng nguồn công bố theo danh sách do người dùng tự lập mà không loại bài nào. Cách dùng xem mục "Quality signals and venue tiers" trong README tiếng Anh hoặc Phụ lục H của USER_GUIDE.md. Từ v3.2.0, lệnh `run` có tùy chọn `--search-field title_and_abstract` để query chỉ được khớp với tiêu đề và tóm tắt, thay vì cả toàn văn như mặc định; cách dùng xem mục "Search field" trong README tiếng Anh hoặc Phụ lục I của USER_GUIDE.md.
 
 Phiên bản: **3.0.5** · Trạng thái: **Stable** · Ngày phát hành: 2026-10-25 · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
 

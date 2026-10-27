@@ -17,9 +17,11 @@ from .common import (
     write_json,
     write_jsonl,
 )
-from .openalex import download_queries
+from .openalex import download_queries, search_query_problem
 from .scimago import enrich_records
 from .scimago_repo import DEFAULT_MANIFEST_URL, sync_repository
+from .venues import TIER_FIELDS as VENUE_TIER_FIELDS
+from .venues import VenueTiers
 
 
 def load_queries(query_values: Optional[List[str]], query_file: Optional[Path]) -> List[str]:
@@ -100,6 +102,7 @@ def apply_main_policy(
     require_doaj: bool = False,
     require_cwts_core: bool = False,
     any_source_status: bool = False,
+    exclude_retracted: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     source_types_norm = {x.casefold() for x in (source_types or []) if x}
     quartiles_norm = {x.upper() for x in (quartiles or []) if x}
@@ -152,6 +155,8 @@ def apply_main_policy(
             reasons.append("NOT_IN_DOAJ")
         if require_cwts_core and not _truthy(row.get("source_is_core")):
             reasons.append("NOT_IN_CWTS_CORE")
+        if exclude_retracted and _truthy(row.get("is_retracted")):
+            reasons.append("RETRACTED")
 
         row["main_corpus"] = not reasons
         row["main_exclusion_reasons"] = "; ".join(reasons)
@@ -187,6 +192,10 @@ def source_audit(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         "match_diagnostic": lambda r: r.get("match_diagnostic"),
         "issn_conflict_candidates": lambda r: r.get("issn_conflict_candidates"),
     }
+    # Venue tiers exist only when a venue list was given; they are listed after paper_count.
+    with_tiers = any("venue_tier" in row for row in rows)
+    if with_tiers:
+        aggregated.update({field: (lambda r, f=field: r.get(f)) for field in VENUE_TIER_FIELDS})
     grouped: Dict[str, Dict[str, Any]] = {}
     statuses: Dict[str, Dict[str, int]] = {}
     sourceids: Dict[str, Dict[str, None]] = {}
@@ -215,6 +224,8 @@ def source_audit(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "issn_conflict_candidates": "",
                 "paper_count": 0,
             }
+            if with_tiers:
+                grouped[key].update({field: "" for field in VENUE_TIER_FIELDS})
             statuses[key] = {}
             sourceids[key] = {}
             values[key] = {field: {} for field in aggregated}
@@ -280,6 +291,15 @@ def build_summary(rows: List[Dict[str, Any]], main: List[Dict[str, Any]], exclud
         quartiles_latest[ql] = quartiles_latest.get(ql, 0) + 1
 
     openalex_ids = [safe_str(row.get("openalex_id")) for row in rows if safe_str(row.get("openalex_id"))]
+    quality: Dict[str, Any] = {
+        "papers_retracted": sum(1 for row in rows if _truthy(row.get("is_retracted"))),
+        # Rows retrieved before v3.1.0 carry no retraction flag; run `run` again to obtain it.
+        "papers_without_retraction_flag": sum(1 for row in rows if safe_str(row.get("is_retracted")) == ""),
+        "papers_without_fwci": sum(1 for row in rows if safe_str(row.get("fwci")) == ""),
+    }
+    if any("venue_tier" in row for row in rows):
+        quality["paper_venue_tier_counts"] = _count_field(rows, "venue_tier")
+        quality["unique_source_venue_tier_counts"] = _count_field(audit, "venue_tier")
     return {
         "tool_version": __version__,
         "total_enriched_records": len(rows),
@@ -313,6 +333,7 @@ def build_summary(rows: List[Dict[str, Any]], main: List[Dict[str, Any]], exclud
         "match_diagnostic_counts": _count_field(
             [row for row in rows if row.get("match_diagnostic")], "match_diagnostic"
         ),
+        **quality,
     }
 
 
@@ -359,6 +380,7 @@ def enrich_existing_file(
     repository_state: Optional[Dict[str, Any]] = None,
     config_file: Optional[str] = None,
     settings_sources: Optional[Dict[str, str]] = None,
+    venue_tiers: Optional[VenueTiers] = None,
     **policy_kwargs: Any,
 ) -> Dict[str, Any]:
     if input_path.suffix.lower() == ".jsonl":
@@ -366,6 +388,8 @@ def enrich_existing_file(
     else:
         rows = read_csv(input_path)
     enriched = enrich_records(rows, cache_dir, manifest, relevant_categories)
+    if venue_tiers is not None:
+        venue_tiers.assign(enriched)
     main, excluded = apply_main_policy(enriched, manifest, **policy_kwargs)
     outputs = _write_partitions(output_prefix, enriched, main, excluded)
     summary = build_summary(enriched, main, excluded)
@@ -391,6 +415,7 @@ def enrich_existing_file(
         "settings_sources": settings_sources or {},
         "relevant_categories": relevant_categories or [],
         "policy": policy_kwargs,
+        "venue_tiers": venue_tiers.describe() if venue_tiers is not None else None,
         "environment": _environment_metadata(),
         "outputs": outputs,
     })
@@ -416,8 +441,15 @@ def run_pipeline(
     api_key_source: str = "",
     config_file: Optional[str] = None,
     settings_sources: Optional[Dict[str, str]] = None,
+    venue_tiers: Optional[VenueTiers] = None,
+    search_field: str = "search",
 ) -> Dict[str, Any]:
     policy_kwargs = policy_kwargs or {}
+    # A query that the search field cannot carry stops the run before any SCImago or OpenAlex request.
+    for query in queries:
+        problem = search_query_problem(query, search_field)
+        if problem:
+            raise ValueError(f"query {query!r}: {problem}")
     repo = sync_repository(
         cache_dir=cache_dir,
         manifest_url=manifest_url,
@@ -442,10 +474,13 @@ def run_pipeline(
         require_abstract=require_abstract,
         max_per_query=max_per_query,
         no_resume=no_resume,
+        search_field=search_field,
     )
     write_csv(raw_csv, raw_rows)
 
     enriched = enrich_records(raw_rows, cache_dir, manifest, relevant_categories)
+    if venue_tiers is not None:
+        venue_tiers.assign(enriched)
     main, excluded = apply_main_policy(enriched, manifest, **policy_kwargs)
 
     summary_json = Path(str(output_prefix) + "_summary.json")
@@ -462,6 +497,7 @@ def run_pipeline(
         "tool_version": __version__,
         "command": "run",
         "queries": queries,
+        "search_field": search_field,
         "from_year": from_year,
         "to_year": to_year,
         "require_abstract": require_abstract,
@@ -482,6 +518,7 @@ def run_pipeline(
         "scimago_integrity_verified": repo["state"].get("integrity_verified"),
         "relevant_categories": relevant_categories or [],
         "policy": policy_kwargs,
+        "venue_tiers": venue_tiers.describe() if venue_tiers is not None else None,
         "environment": _environment_metadata(),
         "outputs": {
             "raw_csv": str(raw_csv),

@@ -29,6 +29,7 @@ from litintel import openalex, scimago_repo  # noqa: E402
 from litintel.common import normalize_issn, normalize_quartile, read_csv, redact_secrets, split_issns  # noqa: E402
 from litintel.pipeline import apply_main_policy, build_summary, enrich_existing_file, source_audit  # noqa: E402
 from litintel.scimago import enrich_records, relevant_category_summary, source_history  # noqa: E402
+from litintel.venues import VenueTierError, VenueTiers  # noqa: E402
 
 openalex.time.sleep = lambda *_: None
 scimago_repo.time.sleep = lambda *_: None
@@ -618,6 +619,56 @@ class TestOpenAlex(unittest.TestCase):
         self.assertTrue(store.add({"openalex_id": "W2", "doi": "10.5/xyz", "title": "B"}))
         self.assertIsNone(store.add({"openalex_id": "", "doi": "", "title": ""}))
 
+    def test_search_field_title_and_abstract_sends_a_filter_instead_of_search(self):
+        from urllib.parse import parse_qsl, urlparse
+        with fake_openalex() as handler:
+            _, summary = self.download(10, require_abstract=True)
+            default_calls = [parse_qsl(urlparse(c).query) for c in handler.calls]
+            handler.calls.clear()
+            _, summary_ta = self.download(10, require_abstract=True, no_resume=True, search_field="title_and_abstract")
+            ta_calls = [parse_qsl(urlparse(c).query) for c in handler.calls]
+        # the default request is the one 3.1 sent: same parameters in the same order
+        self.assertEqual([k for k, _ in default_calls[0]], ["search", "filter", "per_page", "cursor", "api_key"])
+        self.assertEqual(dict(default_calls[0])["search"], "q")
+        self.assertNotIn("title_and_abstract", dict(default_calls[0])["filter"])
+        self.assertEqual(summary["search_field"], "search")
+        for call in ta_calls:
+            params = dict(call)
+            self.assertNotIn("search", params)
+            self.assertEqual(params["filter"].split(","), ["from_publication_date:2020-01-01", "to_publication_date:2026-12-31",
+                                                           "has_abstract:true", "title_and_abstract.search:q"])
+        self.assertEqual(summary_ta["search_field"], "title_and_abstract")
+        self.assertEqual(summary_ta["unique_records"], 3)
+        ckpt = json.loads((self.dir / "ckpt.json").read_text(encoding="utf-8"))
+        self.assertEqual(ckpt["queries"]["q"]["signature"]["search_field"], "title_and_abstract")
+
+    def test_changing_the_search_field_needs_a_new_checkpoint(self):
+        with fake_openalex() as handler:
+            self.download(2, search_field="title_and_abstract")
+            calls = len(handler.calls)
+            with self.assertRaises(RuntimeError) as ctx:
+                self.download(10)
+            self.assertIn("Checkpoint parameters changed", str(ctx.exception))
+            self.assertEqual(len(handler.calls), calls)
+            self.download(2, no_resume=True)
+        sig = json.loads((self.dir / "ckpt.json").read_text(encoding="utf-8"))["queries"]["q"]["signature"]
+        self.assertNotIn("search_field", sig)  # the default keeps the 3.1 signature, so old checkpoints resume
+
+    def test_title_and_abstract_query_with_comma_or_pipe_is_refused_before_any_request(self):
+        self.assertIsNone(openalex.search_query_problem('malware AND ("concept drift" OR drift)', "title_and_abstract"))
+        self.assertIsNone(openalex.search_query_problem("drift, malware | x", "search"))
+        self.assertIn("','", openalex.search_query_problem("drift, malware", "title_and_abstract"))
+        self.assertIn("'|'", openalex.search_query_problem("drift | malware", "title_and_abstract"))
+        self.assertIn("unknown search field", openalex.search_query_problem("q", "fulltext"))
+        with fake_openalex() as handler:
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError) as ctx:
+                openalex.download_queries(["fine", "drift, malware"], 2020, 2026, self.FAKE_KEY, "", self.dir / "raw.jsonl",
+                                          self.dir / "ckpt.json", search_field="title_and_abstract")
+            self.assertEqual(handler.calls, [])
+        self.assertIn("drift, malware", str(ctx.exception))
+        self.assertFalse((self.dir / "ckpt.json").exists())
+        self.assertFalse((self.dir / "raw.jsonl").exists())
+
 
 class TestIssnConflict(RepoCase):
     """v3.0.5: a title match must never override contradictory ISSN evidence (generic, fixture-driven)."""
@@ -862,6 +913,7 @@ class TestConfig(unittest.TestCase):
             (json.dumps({"run": {"from_year": "2015"}}), "'run.from_year' must be an integer"),
             (json.dumps({"run": {"from_year": True}}), "'run.from_year' must be an integer"),
             (json.dumps({"openalex": {"api_key": 12345}}), "'openalex.api_key' must be a string"),
+            (json.dumps({"run": {"search_field": planted}}), "'run.search_field' must be one of: search, title_and_abstract"),
             (json.dumps([1, 2]), "top level must be a JSON object"),
         ]
         for text, expected in cases:
@@ -883,6 +935,622 @@ class TestConfig(unittest.TestCase):
         config = load_config(None, proj)
         self.assertEqual(config.get("openalex", "api_key"), None)
         self.assertIn("config.json", (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines())
+
+    def test_search_field_precedence_and_run_end_to_end(self):
+        proj = make_project_copy(self.base, {"run": {"search_field": "title_and_abstract"}})
+        args, sources = self.parsed(proj, ["run", "--query", "x"])
+        self.assertEqual((args.search_field, sources["search_field"]), ("title_and_abstract", "config.json"))
+        args, sources = self.parsed(proj, ["run", "--query", "x", "--search-field", "search"])
+        self.assertEqual((args.search_field, sources["search_field"]), ("search", "cli"))
+        args, sources = self.parsed(make_project_copy(self.base, {"run": {"search_field": ""}}), ["run", "--query", "x"])
+        self.assertEqual((args.search_field, sources["search_field"]), ("search", "default"))
+        code, _, err = run_cli(proj, ["run", "--query", "x", "--search-field", "fulltext"])
+        self.assertEqual(code, 2)
+        self.assertIn("invalid choice", err)
+
+        with serve(self.repo) as (base_url, _), fake_openalex() as handler:
+            self.manifest["base_url"] = base_url
+            (self.repo / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
+            cfg = {"openalex": {"api_key": self.FAKE_KEY},
+                   "scimago": {"manifest_url": base_url + "manifest.json", "cache_dir": "cache/scimago"}}
+            proj = make_project_copy(self.base, cfg)
+            cache = proj / "cache" / "scimago"
+            code, _, err = run_cli(proj, ["run", "--query", "q, r", "--search-field", "title_and_abstract",
+                                          "--output", str(self.base / "bad" / "x")])
+            self.assertEqual(code, 2)
+            self.assertIn("ERROR (query, --search-field title_and_abstract)", err)
+            self.assertEqual(handler.calls, [])
+            self.assertFalse(cache.exists())
+            self.assertFalse((self.base / "bad").exists())
+            out_prefix = self.base / "out" / "x"
+            code, out, err = run_cli(proj, ["run", "--query", "q", "--search-field", "title_and_abstract",
+                                            "--output", str(out_prefix)])
+            self.assertEqual(code, 0, err)
+            self.assertTrue(handler.calls)
+            from urllib.parse import parse_qsl, urlparse
+            for call in handler.calls:
+                params = dict(parse_qsl(urlparse(call).query))
+                self.assertNotIn("search", params)
+                self.assertTrue(params["filter"].endswith(",title_and_abstract.search:q"), params["filter"])
+        self.assertIn("OpenAlex search field: title_and_abstract (title and abstract only)", out)
+        meta = json.loads(Path(str(out_prefix) + "_run_metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual((meta["search_field"], meta["settings_sources"]["search_field"]), ("title_and_abstract", "cli"))
+        summary = json.loads(Path(str(out_prefix) + "_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["openalex"]["search_field"], "title_and_abstract")
+
+
+PDF_BYTES = b"%PDF-1.4\n" + b"0" * 2000 + b"\n%%EOF\n"
+TITLE_CHALLENGE = (403, {"Content-Type": "text/html"},
+                   b"<html><head><title>Just a moment...</title></head><body>checking</body></html>")
+HEADER_CHALLENGE = (403, {"Content-Type": "text/html", "cf-mitigated": "challenge"}, b"<html><body>wait</body></html>")
+
+
+class _RouteHandler(http.server.BaseHTTPRequestHandler):
+    routes: Dict[str, tuple] = {}
+    hits: List[str] = []
+    agents: List[str] = []
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):  # noqa: N802
+        type(self).hits.append(self.path)
+        type(self).agents.append(self.headers.get("User-Agent", ""))
+        status, headers, body = type(self).routes.get(self.path, (404, {"Content-Type": "text/plain"}, b"not found"))
+        self.send_response(status)
+        for key, value in headers.items():
+            if key != "Content-Length":
+                self.send_header(key, value)
+        length = headers.get("Content-Length", str(len(body)))
+        if length != "omit":
+            self.send_header("Content-Length", length)
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@contextlib.contextmanager
+def route_server(routes: Dict[str, tuple]):
+    handler = type("R", (_RouteHandler,), {"routes": dict(routes), "hits": [], "agents": []})
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", handler
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def oa_row(pid, pdf="", oa="", is_oa=True, landing=""):
+    return {"openalex_id": pid, "doi": f"10.9/{pid.lower()}" if pid else "", "title": f"Paper {pid}",
+            "publication_year": 2024, "source": "Alpha Journal", "authors": "Doe, J.; Roe, R.", "is_open_access": is_oa,
+            "oa_status": "gold" if is_oa else "closed", "best_oa_pdf_url": pdf, "oa_url": oa,
+            "best_oa_landing_page": landing}
+
+
+class TestFetchOpenAccess(unittest.TestCase):
+    """fetch-oa: polite download, bot-checked hosts are never requested again, the rest goes to the manual list."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.out = self.dir / "out"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write_corpus(self, rows, name="x_main.csv") -> Path:
+        path = self.dir / name
+        with path.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    def fetch(self, path, **kw):
+        from litintel.fulltext import fetch_open_access
+        kw.setdefault("delay", 0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return fetch_open_access(path, self.out, verbose=True, **kw)
+
+    def manual(self):
+        return {r["paper"]: r for r in read_csv(self.out / "manual_download.csv")}
+
+    def blocked(self):
+        return json.loads((self.out / "blocked_hosts.json").read_text(encoding="utf-8"))
+
+    @contextlib.contextmanager
+    def hosts(self):
+        with route_server({}) as (b, hb), route_server({}) as (c, hc), route_server({}) as (a, ha):
+            ha.routes.update({
+                "/p1.pdf": (200, {"Content-Type": "application/pdf"}, PDF_BYTES),
+                "/p5.pdf": (200, {"Content-Type": "application/octet-stream"}, PDF_BYTES),
+                "/landing.html": (200, {"Content-Type": "text/html"}, b"<html><title>Article</title>" + b" " * 30000),
+                "/to-b": (302, {"Location": f"{b}/b2.pdf"}, b""),
+                "/closed.pdf": (200, {}, PDF_BYTES),
+            })
+            hb.routes.update({"/b1.pdf": TITLE_CHALLENGE, "/b2.pdf": (200, {}, PDF_BYTES), "/b3.pdf": (200, {}, PDF_BYTES)})
+            hc.routes.update({
+                "/robots.txt": (200, {"Content-Type": "text/plain"}, b"User-agent: *\nAllow: /\nDisallow: /private/\n"),
+                "/private/c1.pdf": (200, {}, PDF_BYTES),
+                "/c2.pdf": (429, {"Retry-After": "3600"}, b"slow down"),
+            })
+            yield (a, ha), (b, hb), (c, hc)
+
+    def standard_corpus(self, a, b, c) -> Path:
+        return self.write_corpus([
+            oa_row("W1", f"{a}/p1.pdf"),                       # downloaded
+            oa_row("W2", f"{b}/b1.pdf"),                       # challenge page: host b blocked for good
+            oa_row("W3", f"{b}/b3.pdf"),                       # host b already blocked: never requested
+            oa_row("W4", f"{a}/to-b"),                         # redirect into blocked host b: not followed
+            oa_row("W5", f"{a}/landing.html", f"{a}/p5.pdf"),  # not a PDF, then the second OA link works
+            oa_row("W6", f"{c}/private/c1.pdf"),               # robots.txt disallows the path (Allow: / comes first)
+            oa_row("W7", f"{c}/c2.pdf"),                       # HTTP 429: host c paused for this run only
+            oa_row("W8", is_oa=False),                         # closed access: manual list, no request
+            oa_row("W9", f"{a}/gone.pdf"),                     # HTTP 404
+            oa_row("W10", f"{a}/closed.pdf", is_oa=False),     # marked closed although a link is given: no request
+            oa_row("W1", f"{a}/p1.pdf"),                       # duplicate record
+        ])
+
+    def test_bot_checked_hosts_are_never_requested_again(self):
+        from litintel.fulltext import USER_AGENT, host_of
+        with self.hosts() as ((a, ha), (b, hb), (c, hc)):
+            path = self.standard_corpus(a, b, c)
+            summary = self.fetch(path)
+            self.assertEqual((summary["papers"], summary["downloaded"], summary["manual_list"]), (10, 2, 8))
+            for pid in ("W1", "W5"):
+                self.assertEqual((self.out / "pdf" / f"{pid}.pdf").read_bytes(), PDF_BYTES)
+            reasons = {k: v["reason"] for k, v in self.manual().items()}
+            self.assertEqual(reasons, {"W2": "BOT_CHECK", "W3": "HOST_BLOCKED", "W4": "HOST_BLOCKED",
+                                       "W6": "ROBOTS_DISALLOWED", "W7": "RATE_LIMITED", "W8": "NOT_OPEN_ACCESS",
+                                       "W9": "HTTP_404", "W10": "NOT_OPEN_ACCESS"})
+            self.assertEqual(hb.hits, ["/robots.txt", "/b1.pdf"])   # neither b3 nor the redirect target b2
+            self.assertEqual(hc.hits, ["/robots.txt", "/c2.pdf"])   # the disallowed path was never requested
+            self.assertNotIn("/closed.pdf", ha.hits)
+            self.assertEqual(set(ha.agents + hb.agents + hc.agents), {USER_AGENT})
+            self.assertEqual(sorted(self.blocked()), [host_of(b)])
+            self.assertIn("Just a moment", self.blocked()[host_of(b)]["reason"])
+            self.assertEqual(summary["paused_hosts_this_run"], [host_of(c)])
+            self.assertIn("W3.pdf", (self.out / "manual_download.html").read_text(encoding="utf-8"))
+            ris = (self.out / "manual_download.ris").read_text(encoding="utf-8")
+            self.assertEqual(ris.count("TY  - "), 8)
+            self.assertIn("DO  - 10.9/w8", ris)
+            answered = [r for r in read_csv(self.out / "fetch_log.csv") if r["http_status"]]
+            self.assertEqual(len(answered), summary["requests_sent_this_run"])   # every request is in the log
+
+            # Second run: only the rate-limited paper is tried again (one robots.txt + one PDF request).
+            before_a, before_b = list(ha.hits), list(hb.hits)
+            summary = self.fetch(path)
+            self.assertEqual(summary["requests_sent_this_run"], 2)
+            self.assertEqual((ha.hits, hb.hits), (before_a, before_b))
+            self.assertEqual(hc.hits[-2:], ["/robots.txt", "/c2.pdf"])
+
+            # A PDF saved by hand in pdf_manual/ is registered and leaves the manual list.
+            (self.out / "pdf_manual" / "W3.pdf").write_bytes(PDF_BYTES)
+            summary = self.fetch(path)
+            self.assertEqual((summary["manually_downloaded"], summary["manual_list"]), (1, 7))
+            self.assertNotIn("W3", self.manual())
+            self.assertEqual(hb.hits, ["/robots.txt", "/b1.pdf"])
+
+            # Removing a host from blocked_hosts.json is the only way to try it again.
+            (self.out / "blocked_hosts.json").write_text("{}", encoding="utf-8")
+            self.fetch(path)
+            self.assertEqual(hb.hits.count("/b1.pdf"), 2)
+            log = read_csv(self.out / "fetch_log.csv")
+            self.assertEqual(sum(1 for r in log if r["outcome"] == "BOT_CHECK" and r["paper"] == "W2"), 2)
+
+    def test_limit_and_retry_failed(self):
+        with self.hosts() as ((a, ha), (b, hb), (c, hc)):
+            path = self.standard_corpus(a, b, c)
+            summary = self.fetch(path, limit=1)
+            self.assertEqual(summary["downloaded"], 1)
+            self.assertEqual(self.manual()["W2"]["reason"], "NOT_ATTEMPTED")
+            self.fetch(path)
+            self.assertEqual(ha.hits.count("/gone.pdf"), 1)
+            self.fetch(path)
+            self.assertEqual(ha.hits.count("/gone.pdf"), 1)            # permanent failure not retried
+            self.fetch(path, retry_failed=True)
+            self.assertEqual(ha.hits.count("/gone.pdf"), 2)            # ... unless asked
+            self.assertEqual(hb.hits.count("/b3.pdf"), 0)              # a blocked host stays untouched
+
+    def test_bot_check_detection(self):
+        from litintel.fulltext import detect_bot_check
+        big = b" " * 30000
+        self.assertEqual(detect_bot_check(200, {}, b"<title>Article</title><script src='https://js.captcha-delivery.com/t.js'>" + big), "")
+        self.assertEqual(detect_bot_check(200, {}, b"<title>Breaking text CAPTCHA with deep learning</title>"), "")
+        self.assertEqual(detect_bot_check(200, {}, b"<title>Social bot detection on Twitter: a survey</title>"), "")
+        self.assertEqual(detect_bot_check(404, {}, b"<title>Not found</title>"
+                                           b"<script src='/cdn-cgi/challenge-platform/scripts/jsd/main.js'></script>"), "")
+        self.assertIn("Client Challenge", detect_bot_check(200, {}, b"<html><title>Client Challenge</title></html>"))
+        self.assertIn("Attention Required", detect_bot_check(403, {}, b"<title>Attention Required! | Cloudflare</title>"))
+        self.assertIn("challenge-platform/h/", detect_bot_check(503, {}, b"<script src='/cdn-cgi/challenge-platform/h/b/x'>"))
+        self.assertIn("Cloudflare challenge", detect_bot_check(*HEADER_CHALLENGE))
+        self.assertEqual(detect_bot_check(403, {}, b""), "HTTP 403 Forbidden")
+        self.assertEqual(detect_bot_check(403, {}, b"", plain_403=False), "")
+        self.assertIn("tdm-reservation", detect_bot_check(200, {"TDM-Reservation": "1"}, b""))
+        self.assertEqual(detect_bot_check(404, {}, b"<html><title>Page not found</title></html>"), "")
+        self.assertEqual(detect_bot_check(429, {}, b"slow down"), "")    # a rate limit, handled separately
+
+    def test_robots_rules_follow_rfc_9309(self):
+        from litintel.fulltext import Robots
+        rules = Robots("User-agent: *\nAllow: /\nDisallow: /private/\n")
+        self.assertFalse(rules.allowed("http://h/private/x.pdf"))
+        self.assertTrue(rules.allowed("http://h/public/x.pdf"))
+        rules = Robots("User-agent: *\nDisallow: /*.pdf$\n")
+        self.assertFalse(rules.allowed("http://h/a/b.pdf"))
+        self.assertTrue(rules.allowed("http://h/a/b.pdf?download=1"))
+        self.assertTrue(rules.allowed("http://h/a/b.html"))
+        rules = Robots("User-agent: OpenAlexLiteratureIntelligence\nDisallow: /\n\nUser-agent: *\nAllow: /\nCrawl-delay: 7\n")
+        self.assertFalse(rules.allowed("http://h/x.pdf"))
+        self.assertTrue(rules.allowed("http://h/robots.txt"))
+        self.assertTrue(Robots("User-agent: *\nDisallow:\n").allowed("http://h/x.pdf"))
+        self.assertEqual(Robots("User-agent: *\nCrawl-delay: 5\n").crawl_delay(), 5.0)
+
+    def test_robots_redirect_unreachable_and_crawl_delay(self):
+        from litintel import fulltext
+        with route_server({}) as (d, hd), route_server({}) as (e, he):
+            hd.routes.update({
+                "/robots.txt": (301, {"Location": "/robots-real.txt"}, b""),
+                "/robots-real.txt": (200, {}, b"User-agent: *\nDisallow: /private/\nCrawl-delay: 3\n"),
+                "/private/x.pdf": (200, {}, PDF_BYTES), "/ok.pdf": (200, {}, PDF_BYTES), "/ok2.pdf": (200, {}, PDF_BYTES),
+            })
+            he.routes.update({"/robots.txt": (503, {}, b"down"), "/p.pdf": (200, {}, PDF_BYTES), "/q.pdf": (200, {}, PDF_BYTES)})
+            path = self.write_corpus([oa_row("W1", f"{d}/private/x.pdf"), oa_row("W2", f"{e}/p.pdf"),
+                                      oa_row("W3", f"{e}/q.pdf"), oa_row("W4", f"{d}/ok.pdf"), oa_row("W5", f"{d}/ok2.pdf")])
+            sleeps = []
+            original = fulltext.time.sleep
+            fulltext.time.sleep = sleeps.append
+            try:
+                self.fetch(path, delay=1)
+            finally:
+                fulltext.time.sleep = original
+            reasons = {k: v["reason"] for k, v in self.manual().items()}
+            self.assertEqual(reasons, {"W1": "ROBOTS_DISALLOWED", "W2": "ROBOTS_UNREACHABLE", "W3": "ROBOTS_UNREACHABLE"})
+            self.assertNotIn("/private/x.pdf", hd.hits)
+            self.assertEqual(he.hits, ["/robots.txt"])                  # an unreadable robots.txt stops the host
+            self.assertTrue(sleeps and max(sleeps) > 2.5)              # Crawl-delay 3 wins over --delay 1
+            self.assertEqual(self.blocked(), {})                       # nothing here is a bot check
+
+    def test_redirect_chains_and_rights_reservation(self):
+        from litintel import fulltext
+        from litintel.fulltext import host_of
+        with route_server({}) as (f, hf), route_server({}) as (g, hg), route_server({}) as (h, hh), \
+                route_server({}) as (r, hr), route_server({}) as (q, hq):
+            hf.routes.update({"/gate": TITLE_CHALLENGE})
+            hq.routes.update({"/gate": HEADER_CHALLENGE})
+            hg.routes.update({"/a": (302, {"Location": f"{f}/gate"}, b""), "/b.pdf": (200, {}, PDF_BYTES)})
+            hh.routes.update({"/t": (302, {"Location": f"{h}/t.pdf", "tdm-reservation": "1"}, b""), "/t.pdf": (200, {}, PDF_BYTES)})
+            hr.routes.update({"/doi/1": (302, {"Location": f"{q}/gate"}, b""), "/doi/2": (200, {}, PDF_BYTES)})
+            path = self.write_corpus([oa_row("W1", f"{g}/a"), oa_row("W2", f"{g}/b.pdf"), oa_row("W3", f"{h}/t"),
+                                      oa_row("W4", f"{r}/doi/1"), oa_row("W5", f"{r}/doi/2")])
+            original = set(fulltext.RESOLVER_HOSTS)
+            fulltext.RESOLVER_HOSTS.add(host_of(r))
+            try:
+                summary = self.fetch(path)
+            finally:
+                fulltext.RESOLVER_HOSTS.clear()
+                fulltext.RESOLVER_HOSTS.update(original)
+            blocked = self.blocked()
+            self.assertIn(host_of(g), blocked)                         # g redirected to a bot check
+            self.assertIn(host_of(f), blocked)
+            self.assertIn(host_of(q), blocked)                         # reached through the resolver
+            self.assertIn("tdm-reservation", blocked[host_of(h)]["reason"])
+            self.assertNotIn(host_of(r), blocked)                      # a resolver is never blocked
+            self.assertEqual(hg.hits, ["/robots.txt", "/a"])           # W2 on g is not requested
+            self.assertNotIn("/t.pdf", hh.hits)                        # the reserved redirect is not followed
+            self.assertEqual(hr.hits, ["/robots.txt", "/doi/1", "/doi/2"])   # it only redirected: not paused
+            reasons = {k: v["reason"] for k, v in self.manual().items()}
+            self.assertEqual(reasons["W2"], "HOST_BLOCKED")
+            self.assertNotIn("W5", reasons)
+            self.assertEqual(summary["downloaded"], 1)
+
+    def test_resolver_redirect_to_a_bot_check_does_not_pause_the_resolver(self):
+        # Found in the first corpus run: a DOI that led to one publisher's bot check paused doi.org,
+        # so every later DOI link of that run was skipped, including those of other publishers.
+        from litintel import fulltext
+        from litintel.fulltext import host_of
+        with route_server({}) as (r, hr), route_server({}) as (p, hp), route_server({}) as (o, ho):
+            hp.routes.update({"/gate": TITLE_CHALLENGE, "/other.pdf": (200, {}, PDF_BYTES)})
+            ho.routes.update({"/ok.pdf": (200, {}, PDF_BYTES)})
+            hr.routes.update({
+                "/doi/1": (302, {"Location": f"{p}/gate"}, b""),        # publisher p serves a bot check
+                "/doi/2": (302, {"Location": f"{o}/ok.pdf"}, b""),      # another publisher is still reached
+                "/doi/3": (302, {"Location": f"{p}/other.pdf"}, b""),   # p is blocked: not requested
+                "/doi/4": TITLE_CHALLENGE,                              # the resolver's own bot check pauses it
+                "/doi/5": (302, {"Location": f"{o}/ok.pdf"}, b""),
+            })
+            path = self.write_corpus([oa_row(f"W{i}", f"{r}/doi/{i}") for i in range(1, 6)])
+            original = set(fulltext.RESOLVER_HOSTS)
+            fulltext.RESOLVER_HOSTS.add(host_of(r))
+            try:
+                summary = self.fetch(path)
+            finally:
+                fulltext.RESOLVER_HOSTS.clear()
+                fulltext.RESOLVER_HOSTS.update(original)
+            self.assertEqual(sorted(self.blocked()), [host_of(p)])
+            self.assertEqual(hp.hits, ["/robots.txt", "/gate"])
+            self.assertEqual(ho.hits, ["/robots.txt", "/ok.pdf"])
+            self.assertEqual(hr.hits, ["/robots.txt", "/doi/1", "/doi/2", "/doi/3", "/doi/4"])
+            reasons = {k: v["reason"] for k, v in self.manual().items()}
+            self.assertEqual(reasons, {"W1": "BOT_CHECK", "W3": "HOST_BLOCKED", "W4": "BOT_CHECK", "W5": "HOST_PAUSED"})
+            self.assertEqual(summary["downloaded"], 1)
+            self.assertEqual(summary["paused_hosts_this_run"], [host_of(r)])
+
+    def test_lower_case_header_names(self):
+        # Found in the first live run: doi.org and others send "location" in lower case.
+        with route_server({}) as (s, hs):
+            hs.routes.update({
+                "/robots.txt": (301, {"location": "/robots-real.txt"}, b""),
+                "/robots-real.txt": (200, {}, b"User-agent: *\nDisallow: /private/\n"),
+                "/r": (308, {"location": "/ok.pdf"}, b""), "/ok.pdf": (200, {}, PDF_BYTES),
+                "/private/x.pdf": (200, {}, PDF_BYTES),
+                "/busy.pdf": (503, {"retry-after": "60"}, b"busy"),
+            })
+            path = self.write_corpus([oa_row("W1", f"{s}/r"), oa_row("W2", f"{s}/private/x.pdf")])
+            summary = self.fetch(path)
+            self.assertEqual(summary["downloaded"], 1)
+            self.assertEqual(self.manual()["W2"]["reason"], "ROBOTS_DISALLOWED")
+            self.assertNotIn("/private/x.pdf", hs.hits)
+        with route_server({}) as (s, hs):
+            hs.routes.update({"/a.pdf": (503, {"retry-after": "60"}, b"busy"), "/b.pdf": (200, {}, PDF_BYTES)})
+            self.out = self.dir / "out2"
+            path = self.write_corpus([oa_row("W1", f"{s}/a.pdf"), oa_row("W2", f"{s}/b.pdf")], name="y_main.csv")
+            self.fetch(path)
+            self.assertEqual(hs.hits, ["/robots.txt", "/a.pdf"])     # lower-case Retry-After still pauses the host
+
+    def test_interruption_keeps_blocked_hosts_and_state(self):
+        from litintel.fulltext import Fetcher, host_of
+        with self.hosts() as ((a, ha), (b, hb), (c, hc)):
+            path = self.standard_corpus(a, b, c)
+            original = Fetcher.fetch
+
+            def interrupt(fetcher, paper, url, destination):
+                if paper == "W3":
+                    raise KeyboardInterrupt
+                return original(fetcher, paper, url, destination)
+
+            Fetcher.fetch = interrupt
+            try:
+                with self.assertRaises(KeyboardInterrupt):
+                    self.fetch(path)
+            finally:
+                Fetcher.fetch = original
+            self.assertEqual(sorted(self.blocked()), [host_of(b)])
+            papers = json.loads((self.out / "fetch_state.json").read_text(encoding="utf-8"))["papers"]
+            self.assertEqual((papers["W1"]["status"], papers["W2"]["status"]), ("DOWNLOADED", "BOT_CHECK"))
+            self.assertEqual(self.manual()["W3"]["reason"], "NOT_ATTEMPTED")
+            self.fetch(path)
+            self.assertEqual(hb.hits, ["/robots.txt", "/b1.pdf"])       # the block survived the interruption
+            self.assertEqual(ha.hits.count("/p1.pdf"), 1)
+
+    def test_broken_responses_do_not_crash_or_count_as_downloads(self):
+        import socket
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            dead = f"http://127.0.0.1:{probe.getsockname()[1]}"
+        n = len(PDF_BYTES)
+        with route_server({}) as (s, hs):
+            hs.routes.update({
+                "/cut.pdf": (200, {"Content-Length": "5000"}, PDF_BYTES[:300]),
+                "/noeof.pdf": (200, {"Content-Length": "omit"}, PDF_BYTES[:300]),
+                "/dup.pdf": (200, {"Content-Length": f"{n}, {n}"}, PDF_BYTES),
+                "/gone.pdf": (404, {}, b"no"),
+            })
+            with route_server({}) as (busy, hbusy):
+                hbusy.routes.update({"/1.pdf": (503, {"Retry-After": "120"}, b"busy"), "/2.pdf": (200, {}, PDF_BYTES)})
+                path = self.write_corpus([
+                    oa_row("W1", f"{s}/cut.pdf"), oa_row("W2", f"{s}/noeof.pdf"), oa_row("W3", f"{s}/dup.pdf"),
+                    oa_row("W4", f"{busy}/1.pdf"), oa_row("W5", f"{busy}/2.pdf"),
+                    oa_row("W6", f"{dead}/x.pdf", f"{s}/gone.pdf"),
+                ])
+                summary = self.fetch(path)
+                reasons = {k: v["reason"] for k, v in self.manual().items()}
+                self.assertEqual(reasons, {"W1": "NETWORK_ERROR", "W2": "TRUNCATED", "W4": "HTTP_5XX", "W5": "HTTP_5XX",
+                                           "W6": "ROBOTS_UNREACHABLE"})
+                self.assertEqual(summary["downloaded"], 1)
+                self.assertEqual(list((self.out / "pdf").glob("*.part")), [])
+                self.assertEqual(hbusy.hits, ["/robots.txt", "/1.pdf"])  # Retry-After pauses the host for this run
+                # Next run: only temporary failures are retried; the 404 link of W6 is not.
+                self.fetch(path)
+                self.assertEqual(hs.hits.count("/gone.pdf"), 1)
+                self.assertEqual((hbusy.hits.count("/1.pdf"), hbusy.hits.count("/2.pdf")), (2, 0))
+                self.assertEqual(self.blocked(), {})
+
+    def test_manual_list_is_escaped_and_keeps_rows_without_identifier(self):
+        from litintel.fulltext import _say, host_of
+        rows = [oa_row("W1", "javascript:alert(1)", landing="javascript:alert(2)"),
+                oa_row("", "", is_oa=False)]
+        rows[0]["title"] = "<script>alert(1)</script>\nsecond line"
+        path = self.write_corpus(rows)
+        summary = self.fetch(path)
+        self.assertEqual(summary["manual_list"], 2)
+        page = (self.out / "manual_download.html").read_text(encoding="utf-8")
+        self.assertNotIn("<script>alert", page)
+        self.assertNotIn("javascript:", page)
+        ris = (self.out / "manual_download.ris").read_text(encoding="utf-8")
+        self.assertEqual(ris.count("TY  - "), 2)
+        self.assertIn("TI  - <script>alert(1)</script> second line", ris)
+        self.assertTrue(any(k.startswith("row_") for k in self.manual()))
+        self.assertEqual(host_of("https://Example.org:443/a"), "example.org")
+        self.assertEqual(host_of("http://example.org:8080/a"), "example.org:8080")
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+        with contextlib.redirect_stdout(stream):
+            _say("bot-check page 'Vui lòng chờ'")                    # must not raise on a non-UTF-8 console
+
+    def test_cli_needs_no_key_and_validates_options(self):
+        proj = make_project_copy(self.dir)
+        with self.hosts() as ((a, ha), (b, hb), (c, hc)):
+            path = self.standard_corpus(a, b, c)
+            for bad in (["--delay", "0.5"], ["--timeout", "0"], ["--max-mb", "0"], ["--limit", "0"]):
+                code, _, err = run_cli(proj, ["fetch-oa", "--input", str(path), *bad])
+                self.assertEqual(code, 2, bad)
+            code, out, err = run_cli(proj, ["fetch-oa", "--input", str(path), "--delay", "1"])
+            self.assertEqual(code, 0, err)
+            self.assertIn("FETCH-OA SUMMARY", out)
+            self.assertIn("to download by hand: 8", out)
+            self.assertIn("paused for this run only", out)
+            self.assertTrue((self.dir / "x_main_fulltext" / "pdf" / "W1.pdf").exists())
+
+
+VENUE_LIST = (
+    "# example list; comment and blank lines are ignored\n"
+    "tier\tvenue\topenalex_source_id\tissn\ttitle_contains\n"
+    "\n"
+    "A\tAlpha Journal\t\t1111-1111\t\n"
+    "B\tHist Journal\thttps://openalex.org/S200\t2222-222x\t\n"
+    "A\tACM CCS\t\t\tcomputer and communications security\n"
+    "B\tACM AsiaCCS\t\t\tasia conference on computer and communications security\n"
+    "B\tRAID\t\t\tresearch in attacks intrusions and defenses; raid\n"
+    "C\tComputers & Security\t\t\tcomputers & security\n"
+    "B\tShared One\t\t4444-4444\t\n"
+    "C\tShared Two\t\t4444-4445\t\n"
+)
+
+
+class TestQualitySignals(RepoCase):
+    def write_list(self, text, name="venues.tsv"):
+        path = Path(self.tmp.name) / name
+        path.write_text(text, encoding="utf-8-sig")
+        return path
+
+    def test_work_record_keeps_retraction_and_normalized_citations(self):
+        work = {"id": "https://openalex.org/W9", "title": "T", "cited_by_count": 40, "fwci": 2.5, "is_retracted": True,
+                "citation_normalized_percentile": {"value": 0.97, "is_in_top_1_percent": False, "is_in_top_10_percent": True}}
+        record = openalex.work_to_record(work, "q")
+        self.assertEqual((record["fwci"], record["citation_normalized_percentile"], record["citation_top_1_percent"],
+                          record["citation_top_10_percent"], record["is_retracted"]), (2.5, 0.97, False, True, True))
+        bare = openalex.work_to_record({"id": "https://openalex.org/W8", "title": "U"}, "q")
+        self.assertEqual([bare[f] for f in ("fwci", "citation_normalized_percentile", "is_retracted")], [None, None, None])
+
+    def test_merge_keeps_a_retraction_and_fills_missing_metrics(self):
+        store = openalex.RecordStore()
+        store.add({"openalex_id": "W1", "doi": "", "title": "A", "is_retracted": False, "fwci": None})
+        store.add({"openalex_id": "W1", "doi": "", "title": "A", "is_retracted": True, "fwci": 1.2})
+        store.add({"openalex_id": "W1", "doi": "", "title": "A", "is_retracted": False, "fwci": 9.9})
+        record = next(iter(store.values()))
+        self.assertEqual((record["is_retracted"], record["fwci"]), (True, 1.2))
+        legacy = openalex.RecordStore()                    # a row written by v3.0.5 has no such keys
+        legacy.add({"openalex_id": "W2", "doi": "", "title": "B"})
+        legacy.add({"openalex_id": "W2", "doi": "", "title": "B", "is_retracted": False, "fwci": 0.4})
+        record = next(iter(legacy.values()))
+        self.assertEqual((record["is_retracted"], record["fwci"]), (False, 0.4))
+
+    def test_exclude_retracted_is_opt_in_and_reported(self):
+        rows = corpus()
+        rows[0]["is_retracted"] = "True"                    # p01, ACTIVE_LATEST journal, as read back from CSV
+        rows[1]["is_retracted"] = "False"
+        _, out = self.enrich(rows)
+        main, _ = apply_main_policy(out, self.manifest, source_types=["journal"])
+        self.assertIn("p01", {r["openalex_id"] for r in main})
+        _, out = self.enrich(rows)
+        main, excluded = apply_main_policy(out, self.manifest, source_types=["journal"], exclude_retracted=True)
+        self.assertNotIn("p01", {r["openalex_id"] for r in main})
+        self.assertIn("RETRACTED", {r["openalex_id"]: r for r in excluded}["p01"]["main_exclusion_reasons"])
+        summary = build_summary(out, main, excluded)
+        self.assertEqual((summary["papers_retracted"], summary["papers_without_retraction_flag"]), (1, len(rows) - 2))
+        self.assertNotIn("paper_venue_tier_counts", summary)
+
+    def test_venue_matching_order_longest_phrase_and_ambiguity(self):
+        tiers = VenueTiers.load(self.write_list(VENUE_LIST))
+        self.assertEqual(len(tiers.venues), 8)
+        match = lambda **row: tiers.match(row)  # noqa: E731
+        self.assertEqual(match(source="Alpha Journal", issn_l="1111-1111"), ("A", "Alpha Journal", "issn"))
+        # The source ID decides before the ISSN, and a lower-case x in the ISSN still matches.
+        self.assertEqual(match(source_openalex_id="S200", issn_l="1111-1111"), ("B", "Hist Journal", "openalex_source_id"))
+        self.assertEqual(match(source="Hist", issn="2222-222x"), ("B", "Hist Journal", "issn"))
+        self.assertEqual(match(source="Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security"),
+                         ("A", "ACM CCS", "title_contains"))
+        self.assertEqual(match(source="Proceedings of the 2019 ACM Asia Conference on Computer and Communications Security"),
+                         ("B", "ACM AsiaCCS", "title_contains"))
+        self.assertEqual(match(source="Computers & Security")[:2], ("C", "Computers & Security"))
+        self.assertEqual(match(source="Computers and Security")[:2], ("C", "Computers & Security"))
+        self.assertEqual(match(source="RAID 2020")[:2], ("B", "RAID"))
+        self.assertEqual(match(source="Raiders of Computing"), ("UNLISTED", "", ""))      # whole words only
+        self.assertEqual(match(source="Unknown Venue", issn_l="9999-9999"), ("UNLISTED", "", ""))
+        self.assertEqual(match(issn_l="4444-4444", issn="4444-4445"), ("AMBIGUOUS", "Shared One | Shared Two", "issn"))
+        # A whole-name rule decides before phrases and does not catch longer names that start the same way.
+        exact = VenueTiers.load(self.write_list(
+            "tier\tvenue\ttitle_exact\ttitle_contains\n"
+            "A\tICML\tInternational Conference on Machine Learning\t\n"
+            "C\tAny machine learning venue\t\tmachine learning\n", "exact.tsv"))
+        self.assertEqual(exact.match({"source": "International conference on machine learning"}),
+                         ("A", "ICML", "title_exact"))
+        self.assertEqual(exact.match({"source": "International Conference on Machine Learning and Cybernetics"}),
+                         ("C", "Any machine learning venue", "title_contains"))
+
+    def test_venue_list_errors_name_the_line(self):
+        header = "tier\tvenue\tissn\ttitle_contains\n"
+        bad = {
+            "tier\tvenue\tisn\n": "line 1",                                          # misspelled column
+            "tier\tvenue\n": "at least one of",
+            header + "\tAlpha\t1111-1111\t\n": "line 2",                             # empty tier
+            header + "UNLISTED\tAlpha\t1111-1111\t\n": "reserved",
+            header + "A\tAlpha\t1111-11\t\n": "not a valid ISSN",
+            header + "A\tAlpha\t\t\n": "give an openalex_source_id",
+            header + "A\tAlpha\t1111-1111\t\nB\tBeta\t11111111\t\n": "line 3",       # same ISSN twice
+            header + "A\tAlpha\t\talpha journal\nB\tBeta\t\tAlpha  Journal\n": "already listed",
+            header + "A\tAlpha\t1111-1111\t\tstray\n": "more cells",
+            header: "no venues",
+            "tier\tvenue\topenalex_source_id\nA\tAlpha\tW123\n": "not an OpenAlex source ID",
+        }
+        for text, expected in bad.items():
+            with self.assertRaises(VenueTierError, msg=text) as ctx:
+                VenueTiers.load(self.write_list(text))
+            self.assertIn(expected, str(ctx.exception), text)
+        csv_list = self.write_list('tier,venue,issn\nA,"Alpha, the journal",1111-1111\n', "venues.csv")
+        self.assertEqual(VenueTiers.load(csv_list).match({"issn": "1111-1111"})[:2], ("A", "Alpha, the journal"))
+
+    def test_enrich_with_venue_list_end_to_end_and_reenrichment(self):
+        tmp = Path(self.tmp.name)
+        src = tmp / "in.csv"
+        rows = corpus()
+        rows[0]["is_retracted"] = True
+        fields = list(rows[0])
+        with src.open("w", encoding="utf-8-sig", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+        venue_file = self.write_list(VENUE_LIST)
+        proj = make_project_copy(tmp)
+        code, out, err = run_cli(proj, ["enrich", "--offline", "--cache-dir", str(self.dir), "--input", str(src),
+                                        "--output", str(tmp / "t"), "--venue-tiers", str(venue_file), "--exclude-retracted"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("paper venue tier:", out)
+        self.assertIn("retracted (OpenAlex is_retracted): 1 (excluded from the main corpus)", out)
+        enriched = {r["openalex_id"]: r for r in read_csv(tmp / "t_enriched.csv")}
+        self.assertEqual((enriched["p01"]["venue_tier"], enriched["p01"]["venue_tier_match"]), ("A", "issn"))
+        self.assertEqual(enriched["p08"]["venue_tier"], "UNLISTED")
+        self.assertEqual(enriched["p09"]["venue_tier"], "B")
+        header = lambda name: (tmp / name).read_text(encoding="utf-8-sig").splitlines()[0]  # noqa: E731
+        self.assertEqual(header("t_main.csv"), header("t_enriched.csv"))
+        self.assertIn("venue_tier", header("t_source_audit.csv"))
+        meta = json.loads((tmp / "t_run_metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["venue_tiers"]["sha256"], hashlib.sha256(venue_file.read_bytes()).hexdigest())
+        self.assertTrue(meta["policy"]["exclude_retracted"])
+        summary = json.loads((tmp / "t_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["paper_venue_tier_counts"]["A"], 4)             # p01, p02, p03, p16 (Alpha Journal)
+        # Re-enriching the enriched file without a list drops the old tiers instead of keeping stale values.
+        code, _, err = run_cli(proj, ["enrich", "--offline", "--cache-dir", str(self.dir),
+                                      "--input", str(tmp / "t_enriched.csv"), "--output", str(tmp / "u")])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("venue_tier", header("u_enriched.csv"))
+        self.assertNotIn("venue_tier", header("u_source_audit.csv"))
+
+    def test_bad_venue_list_stops_before_any_network_access(self):
+        tmp = Path(self.tmp.name)
+        venue_file = self.write_list("tier\tvenue\n")
+        proj = make_project_copy(tmp, {"openalex": {"api_key": "FAKEKEY_NEVER_PRINT_42"}})
+        cache = tmp / "must_not_be_created"
+        with fake_openalex() as handler:
+            code, _, err = run_cli(proj, ["run", "--query", "x", "--cache-dir", str(cache), "--venue-tiers", str(venue_file)])
+            self.assertEqual(handler.calls, [])
+        self.assertEqual(code, 2)
+        self.assertIn("ERROR (venue list)", err)
+        self.assertFalse(cache.exists())
+        code, _, err = run_cli(proj, ["enrich", "--cache-dir", str(cache), "--input", str(venue_file),
+                                      "--output", str(tmp / "v"), "--venue-tiers", str(tmp / "missing.tsv")])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read the venue list", err)
+        self.assertFalse(cache.exists())
 
 
 if __name__ == "__main__":

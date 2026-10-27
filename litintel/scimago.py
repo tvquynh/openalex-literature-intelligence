@@ -587,6 +587,7 @@ ENRICHMENT_FIELDS = (
     "historical_snapshot_years", "scimago_type_historical",
     "issn_conflict_candidates", "match_diagnostic",
     "source_class", "main_corpus", "main_exclusion_reasons",
+    "venue_tier", "venue_tier_venue", "venue_tier_match",
 )
 
 

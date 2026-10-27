@@ -1,37 +1,65 @@
-# Test report - OpenAlex Literature Intelligence v3.0.5 Stable
+# Test report - OpenAlex Literature Intelligence v3.2.0
 
-Release date: 2026-10-25. Code is byte-identical to the independently reviewed 3.0.5 candidate. This release changed packaging and documentation only.
+Release date: 2026-10-27. 3.2.0 adds `run --search-field` (match queries against titles and abstracts only). 3.1.1 fixed one `fetch-oa` defect found in real use (doi.org paused after a redirect to a bot check). 3.1.0 added quality signals with user-defined venue tiers, and the `fetch-oa` command (open-access full text). The automated tests below were rerun with the 3.2.0 code.
 
 ## Automated test suite (shipped in `tests/`)
-Command: `python -m unittest discover -s tests -v`, run in a brand-new virtual environment on an exact copy of this release tree.
+Command: `python -m unittest discover -s tests -v`, run in a brand-new virtual environment on a clean copy of the repository tree.
 
 | Item | Result |
 |---|---|
-| Tool version | 3.0.5 (`python literature_pipeline.py --version`) |
+| Tool version | 3.2.0 (`python literature_pipeline.py --version`) |
 | Python | 3.11.9 |
-| OS | Windows 11 Pro, build 26100 (Python's `platform` reports `Windows-10-10.0.26100-SP0`) |
+| OS | Windows 11 Pro, build 26100 |
 | Dependencies | requests 2.34.2, urllib3 2.8.0, idna 3.20, charset-normalizer 3.5.2, certifi 2026.10.23 |
-| Total tests | 52 |
-| Passed | 52 |
+| Total tests | 75 (52 from 3.0.5, 12 for `fetch-oa`, 7 for quality signals and venue tiers, 4 for the search field) |
+| Passed | 75 |
 | Failed | 0 |
 | Skipped | 0 |
-| Duration | 10.9 s |
+| Duration | 29.8 s |
 
-The same 52 tests also pass on Python 3.14.4 (candidate review). They need no network and no API key: they use a synthetic SCImago repository and local 127.0.0.1 servers with fake keys.
+The tests need no network and no API key: they use a synthetic SCImago repository and local 127.0.0.1 servers with fake keys and simulated bot checks.
 
 Test groups:
 - **Matching:** ISSN conflict, title fallback, ISSN priority, `&`/`and`, ambiguity, invalid ISSN.
 - **Historical sources:** discontinued titles, any earlier snapshot, Sourceid still in latest.
 - **Configuration:** with and without `config.json`, precedence, keyless `run`, invalid configs.
+- **Search field (new in 3.2.0):**
+  - with the default, `run` sends the `search` parameter with the same parameters, in the same order, as 3.1.1;
+  - with `title_and_abstract`, no `search` parameter is sent and the query is the last filter, `title_and_abstract.search:<query>`, after the year and abstract filters, on every page;
+  - a `title_and_abstract` query containing `,` or `|` is refused before any request and before any file is written, also through the CLI, where no SCImago cache is created; both characters are still allowed with `search`;
+  - the field enters the checkpoint signature only when it is not the default, so resuming with another field stops and checkpoints of earlier versions still resume;
+  - precedence CLI > `config.json` > default, an empty value means the default, an unknown value in `config.json` is refused without echoing it, and an end-to-end CLI `run` records the field in the metadata and the summary.
 - **Security:** API-key redaction, no personal e-mail in source.
 - **Repository checksums:** cold, warm, corrupt, offline, tampered, 404, unsafe names.
 - **Corpus policy:** journal-only, all source types, historical-only, order-independent audit, stable schema.
 - **Ranking:** exact-year metrics, future years, quartile placeholder.
 - **Resume/checkpoint:** stop-by-limit, resume, legacy checkpoint.
 - **Dedup:** DOI/OpenAlex-ID aliases.
+- **Quality signals and venue tiers (new):**
+  - `is_retracted`, `fwci` and `citation_normalized_percentile` are taken from the OpenAlex work, and are empty when absent;
+  - merging duplicates keeps a retraction reported by either copy and fills missing metrics, also for rows written by 3.0.5;
+  - `--exclude-retracted` is opt-in, gives the reason `RETRACTED`, and is counted in the summary;
+  - venue matching follows the order source ID, ISSN, whole name, phrase; the longest phrase wins, phrases match whole words, `&` equals `and`, and two venues at the same step give `AMBIGUOUS`;
+  - every malformed list is refused with its line number, and CSV lists work;
+  - `enrich` with a list writes the tier columns, the source audit, the summary counts and the list's SHA-256 in the metadata; re-enriching without a list drops the old tiers;
+  - a bad list stops `run` before any SCImago or OpenAlex request.
+- **Open-access full text (`fetch-oa`, new):**
+  - a blocked host is never requested again, in the same run, through a redirect, or in later runs, and survives an interruption (Ctrl+C);
+  - challenge pages and headers are detected, while paper titles about CAPTCHAs and scripts injected into ordinary pages are not;
+  - robots.txt follows RFC 9309 (longest match, `*`, `$`, agent groups, Crawl-delay), redirects are followed, and an unreadable robots.txt pauses the host;
+  - redirect chains into a bot check block the redirecting hosts, and `tdm-reservation` on a redirect is respected;
+  - a resolver that only redirected to a bot check stays usable for later DOI links, including links to other publishers, while a resolver that serves a bot check itself is paused for the run (new in 3.1.1);
+  - HTTP 429 and 5xx with Retry-After pause the host for the run;
+  - cut-off and truncated bodies and a duplicated Content-Length do not crash the run or count as downloads;
+  - retries are decided per link, `--limit` and `--retry-failed` work, closed-access rows with a link are never requested, and hand-downloaded PDFs are registered;
+  - the HTML and RIS manual lists are escaped, rows without an identifier are kept, and the output is safe on a non-UTF-8 console;
+  - header names in lower case (`location`, `retry-after`) are handled, and every request appears in `fetch_log.csv`;
+  - pacing, the User-Agent, and the CLI option checks are covered.
+
+Before release, an independent review of the first `fetch-oa` draft reproduced nine defects with local servers. All are fixed in 3.1.0, and each has a test above. The new venue-tier tests were also checked against deliberate faults (shortest instead of longest phrase, matching inside words, stale tiers kept on re-enrichment, a retraction lost on merge): each fault makes a test fail. The search-field tests were checked the same way against five faults (the field ignored when the request is built, the field left out of the checkpoint signature, commas accepted, any `config.json` value accepted, the CLI check removed): each makes at least one test fail.
 
 ## Reference-corpus regression (100 OpenAlex records, real verified SCImago 2010-2025 mirror)
-Run with this release's code (not shipped: needs the reference corpus).
+First run with the 3.1.0 code (not shipped: needs the reference corpus), and rerun with the 3.2.0 code on 27 October 2026 with the same results: the five CSV/JSONL files listed below are byte-identical to the earlier 3.1.0 outputs in both modes, the invariant checker again passes 20/20 in both modes, and `inspect-source` gives the same answer.
 
 | Check | Result |
 |---|---|
@@ -42,4 +70,45 @@ Run with this release's code (not shipped: needs the reference corpus).
 | independent invariant checker (`tools/check_reference_invariants.py`) | 20/20 PASS (default), 20/20 PASS (all source types) |
 | `inspect-source --title "IEEE Access" --issn 9999-9999` | UNMATCHED, `TITLE_MATCH_ISSN_CONFLICT` |
 
-The full acceptance suite of the 3.0.5 candidate (96/96 PASS) applies unchanged, because the code is identical. A fresh install from the release ZIP into an empty folder with Windows PowerShell 5.1 passed all 16 steps, including `sync-scimago` from an empty cache (17/17 files), `validate-repo`, `inspect-source`, a live 20-record OpenAlex query and the unit tests.
+These match 3.0.5 Stable exactly. Run without the new options, 3.1.0 and 3.0.5 write byte-identical `_enriched.csv`, `_enriched.jsonl`, `_main.csv`, `_excluded.csv` and `_source_audit.csv` files in both modes; `_summary.json` differs only in `tool_version` and three new counts. The reference records were retrieved with 3.0.2, so they carry no retraction flag or citation measures, and the tool reports this.
+
+With `--venue-tiers examples/venue_tiers_example.tsv`, one of the 100 papers is labelled (B, Computers & Security, matched by ISSN) and 99 are `UNLISTED`. The example list names none of the venues of the other 99 papers.
+
+## Live check of `--search-field` (2026-10-27)
+One query, `malware AND ("concept drift" OR "temporal drift" OR "dataset shift")`, publication years 2010-2026, abstract required, all source types, run with each search field. Four OpenAlex requests in total; cost reported by OpenAlex 0.004 USD.
+
+| Check | `search` | `title_and_abstract` |
+|---|---:|---:|
+| works matched (`meta.count`) | 3,124 | 228 |
+| same count measured earlier that day | 3,124 (3.1.0 `run`) | 228 (separate measurement script) |
+| records retrieved | 100 (`--max-per-query 100`) | 228 (all; 100, then resumed with a larger limit) |
+| records with "malware" in title or abstract | 85 of 100 | 228 of 228 |
+| records with "malware" and one of the three phrases in title or abstract | 85 of 100 | 228 of 228 |
+
+In 5 of the 228 `title_and_abstract` records the phrase is written with a hyphen (concept-drift, concept-drifting): OpenAlex treats the hyphen as a word break. Resuming the `title_and_abstract` run from its checkpoint retrieved the other 128 records and exhausted the query, and `search_field` was recorded in the run metadata and the summary of both runs.
+
+## Live pilot of `fetch-oa` (2026-10-27)
+Input: the 20 records (`_enriched.csv`, all source types) of a live OpenAlex query `malware detection machine learning`, 2020-2026, abstracts required, limited to 20 records. Default settings (`--delay 2`), Windows 11. 22 requests in 42 s.
+
+| Outcome | Papers | What happened |
+|---|---:|---|
+| downloaded | 1 | doi.org redirected to the publisher's PDF (454 KB, complete) |
+| NOT_OPEN_ACCESS | 9 | closed access in OpenAlex; no request sent |
+| HOST_BLOCKED | 6 | MDPI (4 papers) answered robots.txt with an "Access Denied" page (HTTP 403) and ScienceDirect (2) with `tdm-reservation: 1`; each host received exactly one request, and the other papers on it none |
+| NOT_PDF | 3 | the OA link led to an article or record page (IEEE Xplore, Zenodo, a repository download page) instead of a PDF |
+| HTTP_404 | 1 | the OA link reported by OpenAlex no longer exists |
+
+The first pilot run found one defect that the local tests had missed: redirects whose `location` header is written in lower case (doi.org) were not followed. It is fixed, a test was added, and the table above is from the run after the fix.
+
+## First real use of `fetch-oa` (2026-10-27)
+On a thesis literature corpus (73 seed papers and a 100-paper test query), the first 3.1.0 run skipped every DOI link after the first one that led to a publisher's bot check (ACM, Elsevier): the redirect had paused doi.org for the rest of the run, and 21 links ended as `HOST_PAUSED` (17 in the test query, 4 among the seeds). Rerunning `fetch-oa` tried them again, because the blocked publishers were by then in `blocked_hosts.json`; 3 of them gave a PDF. 3.1.1 fixes the cause, and the new test reproduces the case: it fails with the 3.1.0 code and passes with 3.1.1.
+
+The fix was then checked on the same 100 test papers: one 3.1.1 run into a new output folder (so no host was known to be blocked beforehand) sent 125 requests in about 10 minutes, mostly spent waiting for slow servers.
+
+| | 3.1.0, first run | 3.1.0, after three runs | 3.1.1, one run |
+|---|---:|---:|---:|
+| `HOST_PAUSED` | 17 | 0 | 0 |
+| PDFs downloaded | 35 | 38 | 38 |
+| requests sent | 83 | 138 (three runs) | 125 |
+
+doi.org was never paused: all 20 requests to it, including one for robots.txt, returned a redirect. The final status of all 100 papers is the same as after the three 3.1.0 runs, and the 38 PDFs have the same SHA-256. The only host paused was www.osti.gov, whose robots.txt could not be read, as with 3.1.0.

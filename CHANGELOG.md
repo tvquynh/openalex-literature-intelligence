@@ -1,5 +1,48 @@
 # Changelog
 
+## 3.2.0 - 2026-10-27
+One addition to `run`: the search field. Without the new option, `run` sends the same OpenAlex requests as 3.1.1, and `enrich` and `fetch-oa` are unchanged.
+
+- `--search-field search|title_and_abstract` (`run`), with the default from `config.json` `run.search_field`, else `search`. `search` sends the query to the OpenAlex `search` parameter, as before (title, abstract and, where OpenAlex has it, full text). `title_and_abstract` sends it to the `title_and_abstract.search` filter instead (title and abstract only).
+- A `title_and_abstract` query containing `,` or `|` (which separate and combine OpenAlex filter values) is refused before any SCImago or OpenAlex request, with exit code 2. An unknown `run.search_field` in `config.json` is refused without echoing the value.
+- The search field is recorded in `run_metadata.json`, in `summary.json` (`openalex.search_field`) and, when it is not the default, in the checkpoint signature: resuming with another field stops with `Checkpoint parameters changed`, while checkpoints written by earlier versions resume unchanged with the default.
+- The console states the search field at the start of `run`.
+- Live check on 27 October 2026: one query matched 3,124 works with `search`, as with the 3.1.0 `run` earlier that day, and 228 with `title_and_abstract`, as with a separate measurement script; all 228 works contain the query terms in their title or abstract.
+- 4 new offline tests: the request with each field (the default request keeps the parameters and order of 3.1.1), the checkpoint rule, refused queries, and precedence plus an end-to-end `run` through the CLI. Each test was checked against deliberate faults. 75 tests in total.
+- `TEST_REPORT.md` records the real-data check of the 3.1.1 `fetch-oa` fix: on the 100 papers where 3.1.0 first had 17 links paused, one 3.1.1 run paused none and gave the same 38 PDFs as three 3.1.0 runs.
+- User guide: Appendix I and new rows in the configuration and option tables.
+
+## 3.1.1 - 2026-10-27
+Bug fix in `fetch-oa`; nothing else changes.
+
+- A DOI link that redirected to a publisher's bot check paused the resolver (doi.org) for the rest of the run, so every later DOI link was skipped as `HOST_PAUSED`, including links to other publishers. Now the publisher and any non-resolver host that redirected to it are blocked as before, and a resolver that only redirected is left alone; a resolver that answers with a bot check itself is still paused. Found in the first real use on a thesis corpus, where the first runs skipped 21 DOI links; rerunning `fetch-oa` was the workaround.
+- New test with three local servers (resolver, blocked publisher, open publisher); the redirect-chain test now expects the resolver to stay usable. 71 tests in total.
+
+## 3.1.0 - 2026-10-27
+Two additions: quality signals with user-defined venue tiers, and the `fetch-oa` command. Without the new options, `enrich` writes byte-identical CSV/JSONL files to 3.0.5 for the same input; `summary.json` gains three counts.
+
+Quality signals and venue tiers:
+- `run` keeps five more OpenAlex fields per work: `is_retracted`, `fwci`, `citation_normalized_percentile`, `citation_top_1_percent` and `citation_top_10_percent`. They are taken from the responses already received, so no extra request is made. When duplicates are merged, a retraction reported by either copy is kept and missing metrics are filled.
+- `--exclude-retracted` (`run`, `enrich`) excludes retracted works with reason `RETRACTED`. `summary.json` reports `papers_retracted`, `papers_without_retraction_flag` (rows retrieved before 3.1.0) and `papers_without_fwci`, and the CLI says when records lack the flag.
+- `--venue-tiers <file>` (`run`, `enrich`) labels each paper with the tier of its venue from a list the user maintains (TSV, or CSV by extension; columns `tier`, `venue`, `openalex_source_id`, `issn`, `title_exact`, `title_contains`). Matching order: OpenAlex source ID, ISSN, whole source name, then the longest whole-word phrase in the source name. New columns `venue_tier` (tier, `UNLISTED` or `AMBIGUOUS`), `venue_tier_venue` and `venue_tier_match` in the enriched, main, excluded and source-audit files; tier counts in `summary.json`; the list's path, SHA-256 and size in `run_metadata.json`. The labels do not filter.
+- The list is checked before any network access: unknown or repeated columns, empty tiers, the reserved names `UNLISTED`/`AMBIGUOUS`, invalid ISSNs or source IDs, an ID, ISSN or phrase given for two venues, and stray cells stop the command with the line number (exit 2).
+- Re-enriching an output without `--venue-tiers` drops old tier columns instead of keeping stale labels.
+- `examples/venue_tiers_example.tsv` shows the format (ISSNs from the SCImago 2025 snapshot).
+- 7 new offline tests: field extraction, merge rules, the retraction filter, matching order, longest phrase, whole words, `&`, ambiguity, every list error, CSV lists, end-to-end `enrich` with metadata and re-enrichment, and a bad list stopping `run` before any request.
+
+Open-access full text (`fetch-oa`):
+- Input: any `run`/`enrich` output (`*_main.csv`, `*_enriched.csv/.jsonl`, `*_raw.csv`). Tries `best_oa_pdf_url`, then `oa_url`; closed-access papers are listed without any request. No API key and no OpenAlex request.
+- Polite access: sequential requests, `--delay` seconds between two requests to the same host (default 2, minimum 1; a longer robots.txt Crawl-delay wins, up to 60 s), fixed User-Agent `OpenAlexLiteratureIntelligence/<version>` with the repository URL. robots.txt follows RFC 9309 (redirects followed, longest match, `*` and `$`); an unreadable robots.txt skips the host for the run. Only complete PDFs (`%PDF-` ... `%%EOF`, Content-Length checked) up to `--max-mb` (default 100) are kept.
+- Bot checks stop all further requests to a host: a challenge or CAPTCHA page (Cloudflare, Akamai, Imperva, PerimeterX, DataDome, DDoS-Guard, AWS WAF), HTTP 403, or `tdm-reservation: 1` (also on a redirect). The host is written at once to `blocked_hosts.json` with the evidence and is skipped in later runs until removed from that file; hosts that redirected to the check are blocked too. Titles of ordinary pages (for example a paper about CAPTCHAs) and scripts that challenge services inject into ordinary pages do not count. Nothing tries to get past a bot check.
+- Run-only pauses instead of permanent blocks: HTTP 429, 5xx with Retry-After, three network failures in a row, and DOI/handle resolvers (doi.org and similar), so one rate limit cannot cut a repository or every DOI link for good.
+- Outputs: `pdf/`, `downloaded.csv`, `manual_download.csv/.html/.ris` (reason, DOI, links, file name to use), `pdf_manual/` (hand-downloaded PDFs are registered on the next run), `fetch_state.json`, `fetch_log.csv`, `fetch_summary.json`.
+- Reruns skip downloaded papers and retry only temporary failures, decided per link; `--retry-failed` also retries permanent failures. Progress and blocks are saved after every paper and on Ctrl+C; a malformed response is recorded and the run continues. Rows marked closed access are never requested, even with a link. `--limit N` runs a pilot.
+- An independent review before release found nine defects in the first draft (state lost on a crash, robots.txt redirects and wildcards, redirect-chain blocking, false positives on paper titles, per-link retries, 503 handling, closed-access rows with links, unsafe links in the HTML list, truncated PDFs); all are fixed and covered by tests.
+- A live pilot on 20 papers found that redirects with a lower-case `location` header (doi.org) were not followed; fixed. `fetch_log.csv` now also lists every robots.txt request.
+- 11 new offline tests with local servers: challenge pages, rate limits, robots.txt redirects, wildcards and outages, redirect chains, `tdm-reservation`, resolvers, interruption, cut-off and truncated bodies, busy servers, HTML/RIS escaping, lower-case header names, pacing and the User-Agent.
+- 70 tests in total (52 from 3.0.5, 11 for `fetch-oa`, 7 for quality signals and venue tiers).
+- User guide: Appendices G and H and new rows in the command and option tables; the Word file is now `docs/OpenAlex_Literature_Intelligence_User_Guide.docx` (version-neutral name). `*_fulltext/` added to `.gitignore`.
+
 ## 3.0.5 - 2026-10-27 (GitHub publication)
 First public repository. Code unchanged from the 3.0.5 Stable release (every `.py`, `.ps1`, `.txt` and `.json` file is byte-identical). Documentation reorganized: English `README.md`, full user guide in `docs/USER_GUIDE.md` and `docs/OpenAlex_Literature_Intelligence_v3.0.5_User_Guide.docx`, Vietnamese README and quick start moved to `docs/`, English `SECURITY.md`, `LICENSE` (MIT) and `CITATION.cff` added. The mirror-operator notes (`SERVER_MANIFEST_UPDATE_REQUIRED.md`, `manifest_patch_example.json`) are not part of the public repository. Archived on Zenodo: concept DOI 10.5281/zenodo.23680134, v3.0.5 DOI 10.5281/zenodo.23680135.
 

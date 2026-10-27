@@ -15,6 +15,21 @@ PER_PAGE = 100
 REQUEST_TIMEOUT = 60
 MAX_RETRIES = 8
 USER_AGENT = f"OpenAlexLiteratureIntelligence/{__version__}"
+# Where OpenAlex matches the query: "search" sends the search parameter (title, abstract and, where OpenAlex has it,
+# full text); "title_and_abstract" sends the title_and_abstract.search filter (title and abstract only).
+SEARCH_FIELDS = ("search", "title_and_abstract")
+
+
+def search_query_problem(query: str, search_field: str) -> Optional[str]:
+    """Why `query` cannot be sent with `search_field`, or None. In a filter value ',' separates filters and '|'
+    means OR between values, so a title_and_abstract query must contain neither."""
+    if search_field not in SEARCH_FIELDS:
+        return f"unknown search field {search_field!r} (allowed: {', '.join(SEARCH_FIELDS)})"
+    if search_field == "title_and_abstract":
+        for char, meaning in ((",", "separates OpenAlex filters"), ("|", "means OR between filter values")):
+            if char in query:
+                return f"contains {char!r}, which {meaning}; rewrite the query without it (join terms with OR)"
+    return None
 
 
 def reconstruct_abstract(inverted_index: Optional[Dict[str, List[int]]]) -> str:
@@ -136,6 +151,7 @@ def work_to_record(work: Dict[str, Any], matched_query: str) -> Dict[str, Any]:
     oa = work.get("open_access") or {}
     best_oa = work.get("best_oa_location") or {}
     primary_topic = work.get("primary_topic") or {}
+    percentile = work.get("citation_normalized_percentile") or {}
     referenced = work.get("referenced_works") or []
     record = {
         "openalex_id": short_openalex_id(work.get("id")),
@@ -155,6 +171,12 @@ def work_to_record(work: Dict[str, Any], matched_query: str) -> Dict[str, Any]:
         "countries": extract_countries(authorships),
         **source,
         "cited_by_count": work.get("cited_by_count", 0),
+        # Computed by OpenAlex at retrieval time (citations normalized by year and field); None when not computed.
+        "fwci": work.get("fwci"),
+        "citation_normalized_percentile": percentile.get("value"),
+        "citation_top_1_percent": percentile.get("is_in_top_1_percent"),
+        "citation_top_10_percent": percentile.get("is_in_top_10_percent"),
+        "is_retracted": work.get("is_retracted"),
         "references_count": len(referenced),
         "topics": extract_topics(work),
         "topic_ids": extract_topic_ids(work),
@@ -250,6 +272,14 @@ def merge_record(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str
         )
     except (TypeError, ValueError):
         pass
+    # A retraction reported by either copy is kept; citation metrics are filled only when missing.
+    if incoming.get("is_retracted") in (True, "True", "true"):
+        existing["is_retracted"] = True
+    elif existing.get("is_retracted") in (None, "") and incoming.get("is_retracted") not in (None, ""):
+        existing["is_retracted"] = incoming["is_retracted"]
+    for field in ("fwci", "citation_normalized_percentile", "citation_top_1_percent", "citation_top_10_percent"):
+        if existing.get(field) in (None, "") and incoming.get(field) not in (None, ""):
+            existing[field] = incoming[field]
     # Fill identifiers that only the newer copy has (never overwrite existing values).
     if not safe_str(existing.get("doi")) and normalize_doi(incoming.get("doi")):
         existing["doi"] = normalize_doi(incoming.get("doi"))
@@ -360,7 +390,13 @@ def download_queries(
     require_abstract: bool = False,
     max_per_query: Optional[int] = None,
     no_resume: bool = False,
+    search_field: str = "search",
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    # Every query is checked before any request or file change.
+    for query in queries:
+        problem = search_query_problem(query.strip(), search_field)
+        if problem:
+            raise ValueError(f"query {query.strip()!r}: {problem}")
     if no_resume:
         raw_jsonl_path.unlink(missing_ok=True)
         checkpoint_path.unlink(missing_ok=True)
@@ -385,6 +421,9 @@ def download_queries(
             "to_year": to_year,
             "require_abstract": require_abstract,
         }
+        if search_field != "search":
+            # Only a non-default field enters the signature, so checkpoints written before 3.2.0 still resume.
+            signature["search_field"] = search_field
         state = checkpoint.setdefault("queries", {}).get(query, {})
         if state and state.get("signature") != signature:
             raise RuntimeError(
@@ -430,12 +469,12 @@ def download_queries(
             ]
             if require_abstract:
                 filters.append("has_abstract:true")
-            params: Dict[str, Any] = {
-                "search": query,
-                "filter": ",".join(filters),
-                "per_page": per_page,
-                "cursor": cursor,
-            }
+            params: Dict[str, Any] = {}
+            if search_field == "title_and_abstract":
+                filters.append(f"title_and_abstract.search:{query}")
+            else:
+                params["search"] = query
+            params.update({"filter": ",".join(filters), "per_page": per_page, "cursor": cursor})
             if api_key:
                 params["api_key"] = api_key
             if email:
@@ -518,6 +557,7 @@ def download_queries(
     )
     write_jsonl(raw_jsonl_path, final_rows)
     summary = {
+        "search_field": search_field,
         "queries": query_stats,
         "unique_records": len(final_rows),
         "openalex_cost_usd_reported": round(client.total_cost_usd, 6),

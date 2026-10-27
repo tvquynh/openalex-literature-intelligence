@@ -1,8 +1,8 @@
-# OpenAlex Literature Intelligence v3.0.5: Comprehensive User Guide
+# OpenAlex Literature Intelligence v3.2.0: Comprehensive User Guide
 
 Collect, enrich, screen, and audit scientific literature with OpenAlex and historical SCImago data (2010-2025): SJR, quartiles, source status, estimated APC, and a reproducible audit trail.
 
-Stable release: 25 October 2026. This Markdown file is generated from [OpenAlex_Literature_Intelligence_v3.0.5_User_Guide.docx](OpenAlex_Literature_Intelligence_v3.0.5_User_Guide.docx); both have the same content.
+Release 3.2.0, 27 October 2026. This Markdown file is generated from [OpenAlex_Literature_Intelligence_User_Guide.docx](OpenAlex_Literature_Intelligence_User_Guide.docx); both have the same content.
 
 ## Contents
 
@@ -33,6 +33,9 @@ Stable release: 25 October 2026. This Markdown file is generated from [OpenAlex_
 - [Appendix D. Checklist for a new research project](#appendix-d-checklist-for-a-new-research-project)
 - [Appendix E. Filter guide for new researchers and examples for prioritizing trusted sources](#appendix-e-filter-guide-for-new-researchers-and-examples-for-prioritizing-trusted-sources)
 - [Appendix F. License, citation, and support](#appendix-f-license-citation-and-support)
+- [Appendix G. Downloading open-access full text (fetch-oa)](#appendix-g-downloading-open-access-full-text-fetch-oa)
+- [Appendix H. Quality signals and venue tiers](#appendix-h-quality-signals-and-venue-tiers)
+- [Appendix I. Choosing where OpenAlex matches the query](#appendix-i-choosing-where-openalex-matches-the-query)
 
 ## 1. What the tool is for: purpose and value
 
@@ -68,7 +71,7 @@ OpenAlex Literature Intelligence is not merely a script that downloads a list of
 ### 1.3. What the tool does not do
 
 - It does not search Scopus or Web of Science directly; discovery currently uses the OpenAlex Works API.
-- It is not a bulk full-text PDF downloader. OpenAlex may expose OA landing/PDF URLs, but the pipeline focuses on discovery, enrichment, screening, and audit.
+- It does not download subscription full text and never tries to get past a bot check. Since v3.1.0, fetch-oa downloads only the open-access copies that OpenAlex lists and puts everything else on a manual-download list (Appendix G).
 - It does not prove current official Scopus indexing. Presence in the latest SCImago snapshot must not be treated as definitive proof of current Scopus status.
 - It does not label journals as predatory. UNMATCHED or absent-from-SCImago is not evidence of predatory behavior.
 - It does not provide authoritative publisher APCs. APC values are estimated snapshots and must be verified before submission or budgeting.
@@ -115,9 +118,10 @@ The user expresses the research question as one or more query strings. Queries m
 - Multiple-query examples: "Windows PE malware", "concept drift malware detection", "adversarial malware detection".
 - --from-year and --to-year define the publication window.
 - --require-abstract requests only OpenAlex works that have an abstract.
+- --search-field chooses where OpenAlex matches the query: search, the default, also matches the full text where OpenAlex has it; title_and_abstract matches titles and abstracts only (Appendix I).
 - --max-per-query is useful for a pilot run before collecting a large corpus.
 
-Purpose: convert a research question into a reproducible retrieval strategy. Query strings, time bounds, abstract requirements, and record limits are recorded in metadata/checkpoint files so the collection can be audited later.
+Purpose: convert a research question into a reproducible retrieval strategy. Query strings, the search field, time bounds, abstract requirements, and record limits are recorded in metadata/checkpoint files so the collection can be audited later.
 
 ### 3.3. Step 2: Query the OpenAlex Works API
 
@@ -141,7 +145,7 @@ GET https://api.openalex.org/works
 
 | Parameter | Value sent by the tool | Purpose |
 |---|---|---|
-| search | User query string | Find OpenAlex works relevant to the query. |
+| search | User query string | Find OpenAlex works relevant to the query. With --search-field title_and_abstract, the query is sent as the filter title_and_abstract.search:&lt;QUERY&gt; instead (Appendix I). |
 | filter | from_publication_date, to_publication_date, and optionally has_abstract:true | Restrict the publication window and optionally require abstracts. |
 | per_page | Up to 100 records/request | Reduce API calls while paging safely. |
 | cursor | Starts with \* then uses meta.next_cursor | Stable pagination and resumable collection. |
@@ -161,7 +165,7 @@ Each OpenAlex work is flattened into a research-friendly record that can be stor
 - Institutions/countries: institution names/IDs and country codes.
 - Publication source: source name, source OpenAlex ID, source type, ISSN-L, ISSN list, publisher.
 - Source indicators: source_is_oa, source_is_in_doaj, source_is_core, source_listed_in.
-- Impact/topic fields: cited_by_count, references_count, topics, topic IDs, primary topic, keywords.
+- Impact/topic fields: cited_by_count, fwci, citation_normalized_percentile, citation_top_1_percent, citation_top_10_percent, references_count, topics, topic IDs, primary topic, keywords; and is_retracted (Appendix H).
 - Open Access: is_open_access, oa_status, oa_url, best_oa_pdf_url, best_oa_landing_page.
 - Query traceability: matched_query and relevance_score.
 
@@ -179,7 +183,7 @@ OpenAlex ID
 normalized title + publication year
 ```
 
-When duplicates are merged, matched_query values are combined, a longer abstract is preferred, the larger cited_by_count is retained, and missing DOI/OpenAlex IDs may be filled from the duplicate record. After each page, raw JSONL and checkpoint state are saved. If --max-per-query stops a run before exhaustion, the next cursor is preserved for a later resume.
+When duplicates are merged, matched_query values are combined, a longer abstract is preferred, the larger cited_by_count is retained, a retraction reported by either copy is kept, missing citation measures are filled, and missing DOI/OpenAlex IDs may be filled from the duplicate record. After each page, raw JSONL and checkpoint state are saved. If --max-per-query stops a run before exhaustion, the next cursor is preserved for a later resume.
 
 ### 3.6. Step 5: Synchronize and verify the SCImago repository
 
@@ -203,7 +207,7 @@ ISSN_EXACT → ISSNL_EXACT → TITLE_EXACT → TITLE_NORMALIZED → TITLE_STATUS
 - ISSN_EXACT/ISSNL_EXACT have the highest priority because identifiers are stronger than titles.
 - TITLE_NORMALIZED tolerates presentation differences such as punctuation and “&” versus “and”.
 - TITLE_STATUS_NORMALIZED handles historical suffixes such as “(discontinued)”.
-- If titles match but the OpenAlex and SCImago ISSNs explicitly conflict, v3.0.5 does not let title matching override the conflict; the record receives source_status=UNMATCHED, match method TITLE_MATCH_ISSN_CONFLICT, and match_diagnostic=ISSN_CONFLICT, and the rejected candidates are listed in issn_conflict_candidates.
+- If titles match but the OpenAlex and SCImago ISSNs explicitly conflict, the tool (since v3.0.5) does not let title matching override the conflict; the record receives source_status=UNMATCHED, match method TITLE_MATCH_ISSN_CONFLICT, and match_diagnostic=ISSN_CONFLICT, and the rejected candidates are listed in issn_conflict_candidates.
 - If several candidates remain plausible, the result is AMBIGUOUS rather than silently selecting one.
 
 ### 3.8. Step 7: Assign publication-year/latest SJR and classify source status
@@ -220,7 +224,7 @@ ISSN_EXACT → ISSNL_EXACT → TITLE_EXACT → TITLE_NORMALIZED → TITLE_STATUS
 
 After enrichment, records are not deleted. Instead, every record receives main_corpus=True/False and main_exclusion_reasons. The default main corpus requires source_status=ACTIVE_LATEST and SCImago source type=journal.
 
-The user can change that policy with --include-historical-only, --any-source-status, --all-source-types or --source-type; Q1/Q2 filters; Best Quartile or relevant-category mode; --max-apc; --require-doaj; and --require-cwts-core.
+The user can change that policy with --include-historical-only, --any-source-status, --all-source-types or --source-type; Q1/Q2 filters; Best Quartile or relevant-category mode; --max-apc; --require-doaj; --require-cwts-core; and --exclude-retracted. --venue-tiers adds venue tier labels from your own list without filtering (Appendix H).
 
 ### 3.10. Step 9: Export data and audit evidence
 
@@ -300,7 +304,7 @@ SJR and Best Quartile are source-level metadata in each SCImago snapshot. The to
 | TITLE_MATCH_ISSN_CONFLICT | Title matches but identifiers conflict; the tool refuses the match and retains candidates for manual review. |
 
 > **Reliability-first design**  
-> v3.0.5 intentionally accepts some false negatives to avoid false-positive venue matching. For example, if OpenAlex only exposes an e-ISSN while SCImago only contains a print ISSN, the tool may diagnose an ISSN conflict instead of guessing that the sources are identical.
+> The tool intentionally accepts some false negatives to avoid false-positive venue matching. For example, if OpenAlex only exposes an e-ISSN while SCImago only contains a print ISSN, the tool may diagnose an ISSN conflict instead of guessing that the sources are identical.
 
 ## 5. System requirements and preparation
 
@@ -326,7 +330,7 @@ python -m pip --version
 
 ### 6.2. Get the tool
 
-Clone the repository with Git, or download the source ZIP of the v3.0.5 release from the GitHub Releases page and extract it to a fixed directory, for example C:\\OpenAlexV3. Do not run the tool from inside the ZIP archive.
+Clone the repository with Git, or download the source ZIP of the latest release from the GitHub Releases page and extract it to a fixed directory, for example C:\\OpenAlexV3. Do not run the tool from inside the ZIP archive.
 
 ```text
 git clone https://github.com/tvquynh/openalex-literature-intelligence.git C:\OpenAlexV3
@@ -384,7 +388,8 @@ Place the real OpenAlex API key in the private config.json file. Do not edit con
     "from_year": 2010,
     "to_year": 2026,
     "require_abstract": false,
-    "max_per_query": null
+    "max_per_query": null,
+    "search_field": "search"
   }
 }
 ```
@@ -426,6 +431,7 @@ Configuration precedence is: CLI argument &gt; config.json &gt; built-in default
 | run.to_year | integer | Default end year; code default is 2026. |
 | run.require_abstract | boolean | Whether an abstract is required by default. |
 | run.max_per_query | integer/null | Per-query retrieval limit; null means no explicit limit. |
+| run.search_field | string | search or title_and_abstract; code default is search (Appendix I). |
 
 > **Security**  
 > config.json is ignored by Git and must not be included in public ZIPs. Avoid --api-key on the command line because shell history/process listings can expose it. If a key has been shared outside your control, rotate it.
@@ -542,6 +548,8 @@ If --require-abstract is omitted, papers without abstracts remain eligible accor
 | APC ceiling | --max-apc 500 | Requires an estimated APC and value &lt;= 500 USD. |
 | DOAJ | --require-doaj | Requires OpenAlex source_is_in_doaj=True. |
 | CWTS Core | --require-cwts-core | Requires OpenAlex source_is_core=True. |
+| Exclude retracted | --exclude-retracted | Excludes works that OpenAlex marks as retracted (reason RETRACTED). |
+| Venue tiers | --venue-tiers FILE | Adds venue_tier labels from your own list; excludes nothing (Appendix H). |
 
 ### 11.1. Default journal-only
 
@@ -676,7 +684,7 @@ python literature_pipeline.py enrich `
   --output malware_1000_v3
 ```
 
-All policy flags available to run can also be used with enrich. If the input already contains enrichment columns, the tool removes stale enrichment/screening fields before recomputing them.
+All policy flags available to run can also be used with enrich. If the input already contains enrichment columns, the tool removes stale enrichment/screening fields before recomputing them, including old venue_tier columns. Records retrieved before v3.1.0 lack is_retracted, fwci and citation_normalized_percentile; enrich cannot add them, so run run again to obtain them.
 
 ## 13. inspect-source: inspect journal/source history
 
@@ -759,6 +767,11 @@ The checkpoint stores the year range and the abstract requirement of every query
 | estimated_apc_usd | Estimated 2025 APC snapshot. |
 | main_corpus | True/False after screening. |
 | main_exclusion_reasons | One or more reasons the record was excluded from main. |
+| is_retracted | True when OpenAlex marks the work as retracted. |
+| fwci | Field-weighted citation impact computed by OpenAlex; 1.0 is the expected level for the year and field. |
+| citation_normalized_percentile | Citation percentile among comparable works (0 to 1), with top-1% and top-10% flags. |
+| venue_tier | Tier from the --venue-tiers list, UNLISTED or AMBIGUOUS; only with --venue-tiers. |
+| venue_tier_venue / venue_tier_match | Listed venue that matched and the step that decided. |
 
 ## 16. Interpreting matching, status, quartiles, and exclusions
 
@@ -779,6 +792,7 @@ UNMATCHED only means the tool could not establish a sufficiently reliable mappin
 | APC_INVALID | APC could not be parsed as a valid numeric value. |
 | NOT_IN_DOAJ | Does not satisfy --require-doaj. |
 | NOT_IN_CWTS_CORE | Does not satisfy --require-cwts-core. |
+| RETRACTED | OpenAlex marks the work as retracted and --exclude-retracted is active. |
 
 ### 16.3. PowerShell checks
 
@@ -946,6 +960,9 @@ The mirror operator adds the new annual file, updates manifest first_year/last_y
 | Include historical | ... --include-historical-only |
 | Q1/Q2 publication | ... --quartile Q1 --quartile Q2 --quartile-basis publication |
 | Q1/Q2 latest | ... --quartile Q1 --quartile Q2 --quartile-basis latest |
+| Download open-access PDFs | python literature_pipeline.py fetch-oa --input out_main.csv |
+| Exclude retracted works | ... --exclude-retracted |
+| Label venue tiers | ... --venue-tiers my_venues.tsv |
 
 ## Appendix A. Full run option reference
 
@@ -966,12 +983,15 @@ The mirror operator adds the new annual file, updates manifest first_year/last_y
 | --max-apc USD | Maximum estimated APC. |
 | --require-doaj | Require source_is_in_doaj=True. |
 | --require-cwts-core | Require source_is_core=True. |
+| --exclude-retracted | Exclude works marked as retracted by OpenAlex. |
+| --venue-tiers FILE | Label papers with venue tiers from your list; no filtering. |
 | --query TEXT | OpenAlex query; repeatable. |
 | --query-file FILE | One query per line; # introduces comments. |
 | --from-year N | Start year. |
 | --to-year N | End year. |
 | --require-abstract | Require an abstract. |
 | --max-per-query N | Maximum retrieved records per query. |
+| --search-field search\|title_and_abstract | Where OpenAlex matches the query; default search (Appendix I). |
 | --api-key KEY | CLI fallback; not recommended for security. |
 | --email EMAIL | OpenAlex mailto. |
 | --output PREFIX | Output prefix; default literature. |
@@ -987,6 +1007,7 @@ The mirror operator adds the new annual file, updates manifest first_year/last_y
 | run | Repository options + policy options + query/year/key/output/resume/refresh |
 | enrich | Repository options + policy options + --input + --output + --refresh-scimago |
 | inspect-source | Repository options + --title/--issn + optional --output |
+| fetch-oa | --input, --output-dir, --delay, --timeout, --max-mb, --limit, --retry-failed (no API key, no SCImago access) |
 
 ## Appendix C. Data sources and references
 
@@ -1037,6 +1058,8 @@ This appendix is for researchers who encounter terms such as Q1/Q2, DOAJ, CWTS C
 | relevant category | Uses quartile only in user-selected categories. | Avoids relying on a journal’s best quartile in an unrelated category. | Requires exact category labels and can narrow the corpus substantially. |
 | DOAJ | OpenAlex indicates the source is listed in the Directory of Open Access Journals. | Adds an OA transparency/best-practice membership signal. | DOAJ covers fully OA journals; many excellent subscription/hybrid journals are not in DOAJ. |
 | CWTS Core | OpenAlex indicates the source is in the CWTS/Leiden core source list. | Adds an independent core-source allow-list signal. | Not the same as Clarivate Web of Science Core Collection and not a paper-quality guarantee. |
+| Retracted works | OpenAlex marks the work as retracted (is_retracted). | --exclude-retracted removes such works from main. | Retraction notices reach OpenAlex with a delay; check key papers on the publisher page. |
+| Venue tier list | Your own list of venues and tiers, given with --venue-tiers. | Ranks conferences, which SCImago gives no quartile, by the rule of your protocol. | The tiers are only as good as the list; it labels papers and excludes nothing. |
 | APC ceiling | Requires estimated APC &lt;= the chosen threshold. | Useful for budget-oriented shortlists. | Snapshot estimate only; missing APC can cause exclusion and official publisher price may differ. |
 | HISTORICAL_ONLY | Source exists in older SCImago snapshots but not latest. | Useful for historical literature and longitudinal analysis. | Should not be treated automatically as low quality or formally discontinued from Scopus. |
 | --any-source-status | Allows records regardless of status. | Useful for very broad exploratory corpora. | Can put unmatched or ambiguous sources into main; manual review is then essential. |
@@ -1049,6 +1072,8 @@ This appendix is for researchers who encounter terms such as Q1/Q2, DOAJ, CWTS C
 - If you are choosing journals to submit to now: use --quartile-basis latest, optionally combine with relevant category and an APC ceiling.
 - If you specifically need fully Open Access journals: add --require-doaj.
 - If you want a CWTS/Leiden core-source shortlist: add --require-cwts-core.
+- If you need to rank conferences as well as journals, or to apply the venue tiers of your own protocol: write a venue list and add --venue-tiers (Appendix H).
+- In every review: add --exclude-retracted, and check the retraction status of key papers by hand.
 - If the venue spans many categories: prefer relevant-category mode over Best Quartile when disciplinary fit matters.
 
 > **Do not enable every filter by default**  
@@ -1245,7 +1270,7 @@ After a 20–100 paper pilot, do not inspect only main count. Read raw, enriched
 - SCImago Journal & Country Rank: https://www.scimagojr.com/
 
 > **Conclusion**  
-> OpenAlex Literature Intelligence v3.0.5 Stable is most useful when you need to transform literature discovery into a pipeline with preserved raw data, enriched venue metadata, explicit screening policy, and an auditable trail. Its main value is not only finding papers, but making the resulting corpus explainable, reproducible, and updateable as source data changes.
+> OpenAlex Literature Intelligence is most useful when you need to transform literature discovery into a pipeline with preserved raw data, enriched venue metadata, explicit screening policy, and an auditable trail. Its main value is not only finding papers, but making the resulting corpus explainable, reproducible, and updateable as source data changes.
 
 ## Appendix F. License, citation, and support
 
@@ -1253,3 +1278,126 @@ After a 20–100 paper pilot, do not inspect only main count. Read raw, enriched
 - Citation: if the tool supports published work, cite it with the metadata in CITATION.cff; GitHub shows it under “Cite this repository”.
 - Questions and bug reports: open an issue at https://github.com/tvquynh/openalex-literature-intelligence/issues. Include the tool version, the command, and the relevant part of the output. Never paste an API key or the contents of config.json.
 - Security problems: follow SECURITY.md.
+
+## Appendix G. Downloading open-access full text (fetch-oa)
+
+fetch-oa reads a corpus produced by run or enrich and downloads the open-access PDF of each paper. It needs no API key and sends no request to OpenAlex: it uses the best_oa_pdf_url and oa_url columns already in the file. Papers without an open copy, and every link that fails, go to a manual-download list.
+
+```text
+python literature_pipeline.py fetch-oa --input thesis_literature_main.csv --limit 20
+python literature_pipeline.py fetch-oa --input thesis_literature_main.csv
+```
+
+The first command is a pilot that tries 20 papers; the second processes the whole file. The output folder defaults to &lt;input name&gt;_fulltext next to the input file (here thesis_literature_main_fulltext); --output-dir chooses another one.
+
+### G.1. How requests are made
+
+- Requests are sent one at a time, at least --delay seconds apart for the same host (default 2 s, minimum 1 s), with the User-Agent OpenAlexLiteratureIntelligence/3.2.0 and a link to the project repository.
+- robots.txt is read once per host and run, following redirects, with RFC 9309 matching (longest rule wins, \* and $ wildcards). A path it disallows is never requested (ROBOTS_DISALLOWED), a Crawl-delay longer than --delay is honoured (up to 60 s), and a host whose robots.txt cannot be read is skipped for that run (ROBOTS_UNREACHABLE).
+- Redirects are followed one hop at a time, so a link through doi.org never reaches a host that is already blocked.
+- A response is kept only if it is a complete PDF (it starts with %PDF- and ends with %%EOF) of at most --max-mb megabytes (default 100); a cut-off file is discarded (TRUNCATED) and tried again on the next run.
+
+### G.2. Hosts that block bots
+
+When a host answers with a bot check, the tool records it in blocked_hosts.json and sends it no further request, in this run or in later runs. A bot check is a challenge or CAPTCHA page (for example from Cloudflare, Akamai, Imperva, PerimeterX, DataDome, DDoS-Guard or AWS WAF), HTTP 403, or the header tdm-reservation: 1, by which a publisher reserves text and data mining rights. The block is saved at once, so an interrupted run cannot forget it, and when the check appears after a redirect, the hosts that redirected to it are blocked as well. The tool never tries to get past a bot check: the papers of that host go to the manual-download list. To try a host again, delete its entry from blocked_hosts.json. Some answers only pause a host for the current run and are tried again next time: HTTP 429 (RATE_LIMITED), a busy server that sends Retry-After with a 5xx status, repeated network failures, and an unreadable robots.txt. DOI and handle resolvers such as doi.org are never blocked, because blocking them would cut every DOI link. A resolver that only redirected to a bot check is not paused either, since its next DOI may lead to another publisher; a resolver that answers with a bot check itself is paused for the run (HOST_PAUSED).
+
+### G.3. Output folder
+
+- pdf/&lt;OpenAlex ID&gt;.pdf: the downloaded files.
+- downloaded.csv: one row per downloaded paper with the file, its SHA-256, its size, and the source URL.
+- manual_download.csv, manual_download.html, manual_download.ris: the papers still to be fetched by hand, with the reason, the DOI, landing-page and PDF links, and the file name to use. The .ris file imports into Zotero.
+- pdf_manual/: save PDFs downloaded by hand here under the suggested file name. The next run registers them (MANUAL_DOWNLOADED) and removes them from the manual list.
+- blocked_hosts.json, fetch_state.json, fetch_log.csv, fetch_summary.json: blocked hosts with the evidence, the state of every paper, every request sent, and the counts of each run.
+
+### G.4. Reasons in the manual list
+
+- NOT_OPEN_ACCESS: OpenAlex lists no open copy, which is typical for subscription journals.
+- NO_OA_URL: the paper is marked open access but has no usable link.
+- BOT_CHECK: the request for this paper met a bot check; its host is now blocked.
+- HOST_BLOCKED: the host was blocked earlier, so no request was sent.
+- ROBOTS_DISALLOWED: robots.txt forbids automatic access to the link.
+- NOT_OPEN_ACCESS also covers rows that carry a link but are marked closed access: they are never requested.
+- NOT_PDF: the link returned a web page instead of a PDF, often the article page, where the PDF can be downloaded by hand.
+- HTTP_404, HTTP_410 and other HTTP_4xx codes: the link failed.
+- RATE_LIMITED, HOST_PAUSED, ROBOTS_UNREACHABLE, NETWORK_ERROR, HOST_UNREACHABLE, HTTP_5XX, TRUNCATED, ERROR: temporary problems, retried on the next run.
+- TOO_LARGE, TOO_MANY_REDIRECTS, and NOT_ATTEMPTED for papers left for a later run by --limit.
+
+### G.5. Reruns and licences
+
+Run the same command again at any time, also after pressing Ctrl+C: progress is saved after every paper. Downloaded papers are skipped, temporary failures are retried, and permanent failures are kept unless --retry-failed is given; this decision is taken separately for each link of a paper. Blocked hosts stay blocked either way. TOO_LARGE is permanent, so after raising --max-mb run with --retry-failed. Open access does not always mean free reuse: check the licence of each file before sharing or redistributing it.
+
+## Appendix H. Quality signals and venue tiers
+
+Since v3.1.0, run keeps five OpenAlex fields that help to judge and order papers, and two options use them or add your own venue tiers. None of them replaces reading the papers.
+
+### H.1. Fields taken from OpenAlex
+
+- is_retracted: OpenAlex marks the work as retracted. --exclude-retracted moves such works to _excluded.csv with the reason RETRACTED.
+- fwci: field-weighted citation impact, the citations a work received relative to those expected for works of the same publication year and field; 1.0 is the expected level.
+- citation_normalized_percentile: the citation percentile of the work among comparable works, from 0 to 1. citation_top_1_percent and citation_top_10_percent say whether it is in the top 1% or 10%.
+
+OpenAlex computes the citation measures when the query runs (see its documentation for the exact definitions), so they change as citations accrue, carry little information for papers from the last year or two, and are empty when OpenAlex has not computed them. They are taken from the responses already received, so no extra request is made. Use them to order reading within a group of papers, not to exclude papers; the tool never filters on them. Records retrieved before v3.1.0 lack these columns, and enrich cannot add them; run run again to obtain them.
+
+### H.2. Venue tiers from your own list
+
+--venue-tiers FILE labels every paper with the tier of its venue from a list that you write and approve, for example the tiers defined in a review protocol. The tool does not rank venues itself, and the option removes nothing from the main corpus. The file examples/venue_tiers_example.tsv shows the format; its tiers are examples, not a recommendation.
+
+The list is a tab-separated file, or comma-separated when its name ends in .csv, with a header row and one row per venue. Lines starting with # and blank lines are ignored. The columns are:
+
+- tier: any label you choose (A, B, core, and so on); UNLISTED and AMBIGUOUS are reserved.
+- venue: the name written to venue_tier_venue.
+- openalex_source_id, issn, title_exact, title_contains: ways to recognise the venue. Give at least one, and separate several values with a semicolon.
+
+Each source ID, ISSN or phrase may belong to one venue only. A malformed list (an unknown column, an empty tier, an invalid ISSN or source ID, a key given for two venues, a stray cell) stops run or enrich before any download, with the line number.
+
+### H.3. How a venue is recognised
+
+The steps are tried in this order, and the first step that finds a listed venue decides:
+
+- the OpenAlex source ID of the paper's source;
+- any ISSN or ISSN-L of the source;
+- the whole OpenAlex source name (title_exact);
+- a phrase contained in the source name (title_contains). Phrases match whole words, and the longest listed phrase wins: for a paper in the ACM Asia Conference on Computer and Communications Security, the phrase asia conference on computer and communications security beats conference on computer and communications security.
+
+Names ignore case, punctuation and accents, and & counts as and. A paper whose source matches two listed venues at the same step gets AMBIGUOUS with both names: correct the list and run enrich again rather than choosing by hand. A paper whose source matches no row gets UNLISTED.
+
+### H.4. Outputs
+
+- venue_tier, venue_tier_venue and venue_tier_match (openalex_source_id, issn, title_exact or title_contains) in the enriched, main, excluded and source-audit files.
+- paper_venue_tier_counts and unique_source_venue_tier_counts in the summary.
+- The list's path, SHA-256, number of venues and tiers in the run metadata, so the labels of a run can be traced to the exact list.
+
+```text
+python literature_pipeline.py enrich --input thesis_literature_raw.jsonl --output thesis_tiers --all-source-types --exclude-retracted --venue-tiers my_venues.tsv
+```
+
+### H.5. Writing a useful list
+
+- SCImago assigns no quartile to conference proceedings, so a list is the practical way to rank conferences together with journals.
+- Conference papers printed in a book series such as Lecture Notes in Computer Science carry the series as their OpenAlex source, so such a conference cannot be recognised by name; tier those papers by hand.
+- Prefer ISSNs for journals: two journals can share a title (for example Electronics), but not an ISSN.
+- After a first run, look at the UNLISTED sources with the most papers in _source_audit.csv and extend the list. Record the list and its SHA-256 in your protocol.
+
+## Appendix I. Choosing where OpenAlex matches the query
+
+Since v3.2.0, run can send each query to OpenAlex in two ways. The choice changes which works are returned, so record it in your protocol; the tool writes it to the run metadata, the summary and the checkpoint.
+
+- search, the default and the only behaviour before v3.2.0: the query goes to the OpenAlex search parameter, which matches the title, the abstract and, for works whose full text OpenAlex has indexed, the full text.
+- title_and_abstract: the query goes to the title_and_abstract.search filter, which matches the title and the abstract only.
+
+### I.1. Effect on the result set
+
+A query that also matches full text returns many works that mention its terms only in passing, for example in a related-work section. In a live check on 27 October 2026, the query below, limited to 2010-2026 and to works with an abstract, matched 3,124 works with search and 228 with title_and_abstract. All 228 works contain the terms in their title or abstract, while 15 of the first 100 works returned by search do not mention malware there.
+
+```text
+python literature_pipeline.py run --query 'malware AND ("concept drift" OR "temporal drift" OR "dataset shift")' --search-field title_and_abstract --require-abstract --from-year 2010 --to-year 2026 --output drift
+```
+
+The narrower field also misses relevant works whose titles and abstracts use other words. Before a large collection, check the choice on papers you already know to be relevant (for example the seed papers of a review): count how many of them each query returns with each search field.
+
+### I.2. Rules for title_and_abstract
+
+- The query is sent as a filter value, in which a comma separates filters and | means OR between values. A query that contains , or | is therefore refused before any SCImago or OpenAlex request; join the terms with OR instead. With search, both characters are allowed as before.
+- The query syntax is the same as with search: AND, OR and NOT in capitals, quoted phrases and parentheses. OpenAlex treats a hyphen as a word break, so "concept drift" also matches concept-drift.
+- The default comes from run.search_field in config.json; --search-field on the command line overrides it.
+- The checkpoint remembers the search field. Resuming with a different field stops with "Checkpoint parameters changed"; use --no-resume or a new --output prefix. Checkpoints written by earlier versions resume unchanged with the default field.

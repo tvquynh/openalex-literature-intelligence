@@ -10,6 +10,8 @@ from typing import Any, Dict
 from litintel import __version__
 from litintel.common import write_csv, write_json
 from litintel.config import Config, ConfigError, load_config
+from litintel.fulltext import DEFAULT_DELAY, DEFAULT_MAX_MB, REQUEST_TIMEOUT, fetch_open_access
+from litintel.openalex import SEARCH_FIELDS, search_query_problem
 from litintel.pipeline import enrich_existing_file, load_queries, run_pipeline
 from litintel.scimago import source_history
 from litintel.scimago_repo import (
@@ -19,6 +21,7 @@ from litintel.scimago_repo import (
     sync_repository,
     validate_cached_repository,
 )
+from litintel.venues import VenueTierError, VenueTiers
 
 # No personal default: the OpenAlex mailto comes from --email or config.json openalex.email (else none is sent).
 DEFAULT_EMAIL = ""
@@ -56,13 +59,15 @@ def resolve_settings(args: argparse.Namespace, config: Config) -> Dict[str, str]
         sources[name] = "default"
         return default
 
-    args.cache_dir = Path(pick("cache_dir", args.cache_dir, "scimago", "cache_dir", DEFAULT_CACHE))
-    args.manifest_url = pick("manifest_url", args.manifest_url, "scimago", "manifest_url", DEFAULT_MANIFEST_URL)
+    if hasattr(args, "cache_dir"):  # commands that use the SCImago repository (fetch-oa does not)
+        args.cache_dir = Path(pick("cache_dir", args.cache_dir, "scimago", "cache_dir", DEFAULT_CACHE))
+        args.manifest_url = pick("manifest_url", args.manifest_url, "scimago", "manifest_url", DEFAULT_MANIFEST_URL)
     if args.command == "run":
         args.from_year = pick("from_year", args.from_year, "run", "from_year", DEFAULT_FROM_YEAR)
         args.to_year = pick("to_year", args.to_year, "run", "to_year", DEFAULT_TO_YEAR)
         args.max_per_query = pick("max_per_query", args.max_per_query, "run", "max_per_query", None)
         args.require_abstract = bool(pick("require_abstract", args.require_abstract, "run", "require_abstract", False))
+        args.search_field = pick("search_field", args.search_field, "run", "search_field", "search")
         args.email = pick("email", args.email, "openalex", "email", DEFAULT_EMAIL)
         # API key: CLI > config.json > legacy OPENALEX_API_KEY environment variable (deprecated).
         if args.api_key:
@@ -133,6 +138,21 @@ def add_policy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-apc", type=float, default=None, help="Maximum estimated APC (USD) from the APC snapshot")
     parser.add_argument("--require-doaj", action="store_true", help="Require OpenAlex source_is_in_doaj=True")
     parser.add_argument("--require-cwts-core", action="store_true", help="Require OpenAlex source_is_core=True")
+    parser.add_argument(
+        "--exclude-retracted",
+        action="store_true",
+        help="Exclude works that OpenAlex marks as retracted (is_retracted=True) from the main corpus",
+    )
+    parser.add_argument(
+        "--venue-tiers",
+        type=Path,
+        default=None,
+        help=(
+            "Your venue list (TSV, or CSV by extension; columns tier, venue, openalex_source_id, issn, "
+            "title_exact, title_contains). Adds venue_tier, venue_tier_venue and venue_tier_match; filters nothing. "
+            "See examples/venue_tiers_example.tsv"
+        ),
+    )
 
 
 def policy_kwargs(args: argparse.Namespace):
@@ -149,7 +169,29 @@ def policy_kwargs(args: argparse.Namespace):
         "require_doaj": args.require_doaj,
         "require_cwts_core": args.require_cwts_core,
         "any_source_status": args.any_source_status,
+        "exclude_retracted": args.exclude_retracted,
     }
+
+
+def load_venue_tiers(args: argparse.Namespace):
+    """Return (VenueTiers or None, error message or None); the list is read before any network access."""
+    if args.venue_tiers is None:
+        return None, None
+    try:
+        return VenueTiers.load(args.venue_tiers), None
+    except VenueTierError as exc:
+        return None, f"ERROR (venue list): {exc}"
+
+
+def print_quality_summary(summary: Dict[str, Any], args: argparse.Namespace) -> None:
+    print(f"  retracted (OpenAlex is_retracted): {summary['papers_retracted']:,}"
+          + (" (excluded from the main corpus)" if args.exclude_retracted else ""))
+    missing = summary["papers_without_retraction_flag"]
+    if missing:
+        print(f"  NOTE: {missing:,} records carry no retraction flag (retrieved before v3.1.0); "
+              "run `run` again to obtain is_retracted, fwci and citation_normalized_percentile.")
+    if "paper_venue_tier_counts" in summary:
+        print("  paper venue tier:", summary["paper_venue_tier_counts"])
 
 
 def command_sync(args: argparse.Namespace) -> int:
@@ -187,6 +229,15 @@ def command_run(args: argparse.Namespace) -> int:
     queries = load_queries(args.query, args.query_file)
     if not queries:
         raise SystemExit("Provide --query and/or --query-file")
+    venue_tiers, error = load_venue_tiers(args)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+    for query in queries:
+        problem = search_query_problem(query, args.search_field)
+        if problem:
+            print(f"ERROR (query, --search-field {args.search_field}): {query!r} {problem}", file=sys.stderr)
+            return 2
     if not args.api_key:
         # Fail before any SCImago or OpenAlex request: discovery needs a key.
         print(
@@ -203,6 +254,9 @@ def command_run(args: argparse.Namespace) -> int:
         print("WARNING: --api-key is visible in shell history and process lists; prefer openalex.api_key in config.json.")
     elif args.api_key_source == "environment":
         print("NOTE: using the OPENALEX_API_KEY environment variable (deprecated); prefer openalex.api_key in config.json.")
+    field_note = ("title and abstract only" if args.search_field == "title_and_abstract"
+                  else "title, abstract and full text where OpenAlex has it")
+    print(f"OpenAlex search field: {args.search_field} ({field_note})")
     summary = run_pipeline(
         queries=queries,
         from_year=args.from_year,
@@ -222,6 +276,8 @@ def command_run(args: argparse.Namespace) -> int:
         refresh_scimago=args.refresh_scimago,
         relevant_categories=args.relevant_category,
         policy_kwargs=policy_kwargs(args),
+        venue_tiers=venue_tiers,
+        search_field=args.search_field,
     )
     print("\nFINAL SUMMARY")
     print(f"  enriched: {summary['total_enriched_records']:,}")
@@ -233,6 +289,7 @@ def command_run(args: argparse.Namespace) -> int:
     unmatched = summary.get("paper_source_status_by_class", {}).get("UNMATCHED", {})
     if unmatched:
         print("  unmatched paper breakdown:", unmatched)
+    print_quality_summary(summary, args)
     for q in summary.get("openalex", {}).get("queries", []):
         if q.get("stopped_by_limit"):
             print(
@@ -244,6 +301,10 @@ def command_run(args: argparse.Namespace) -> int:
 
 
 def command_enrich(args: argparse.Namespace) -> int:
+    venue_tiers, error = load_venue_tiers(args)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
     repo = sync_repository(
         cache_dir=args.cache_dir,
         manifest_url=args.manifest_url,
@@ -260,6 +321,7 @@ def command_enrich(args: argparse.Namespace) -> int:
         repository_state=repo["state"],
         config_file=args.config_file,
         settings_sources=args.settings_sources,
+        venue_tiers=venue_tiers,
         **policy_kwargs(args),
     )
     print("\nENRICH SUMMARY")
@@ -272,6 +334,7 @@ def command_enrich(args: argparse.Namespace) -> int:
     unmatched = summary.get("paper_source_status_by_class", {}).get("UNMATCHED", {})
     if unmatched:
         print("  unmatched paper breakdown:", unmatched)
+    print_quality_summary(summary, args)
     if summary.get("duplicate_openalex_id_records"):
         print(f"  WARNING: input contains {summary['duplicate_openalex_id_records']} duplicate OpenAlex-ID records (kept, not removed).")
     print(f"\nOutput prefix: {args.output}")
@@ -330,9 +393,52 @@ def command_inspect_source(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_fetch_oa(args: argparse.Namespace) -> int:
+    if not args.input.is_file():
+        print(f"ERROR: input file not found: {args.input}", file=sys.stderr)
+        return 2
+    if args.delay < 1.0:
+        print("ERROR: --delay must be at least 1 second (one request per host per second at most).", file=sys.stderr)
+        return 2
+    if args.timeout <= 0 or args.max_mb <= 0 or (args.limit is not None and args.limit < 1):
+        print("ERROR: --timeout and --max-mb must be positive, and --limit at least 1.", file=sys.stderr)
+        return 2
+    output_dir = args.output_dir or args.input.with_name(args.input.stem + "_fulltext")
+    print(f"Output folder: {output_dir}")
+    try:
+        summary = fetch_open_access(
+            input_path=args.input,
+            output_dir=output_dir,
+            delay=args.delay,
+            timeout=args.timeout,
+            max_mb=args.max_mb,
+            limit=args.limit,
+            retry_failed=args.retry_failed,
+        )
+    except KeyboardInterrupt:
+        print("\nInterrupted. Progress, blocked hosts and the manual-download list were saved; run the same command to continue.",
+              file=sys.stderr)
+        return 130
+    print("\nFETCH-OA SUMMARY")
+    print(f"  papers in input: {summary['papers']:,}")
+    print(f"  downloaded open-access PDFs: {summary['downloaded']:,} (folder pdf)")
+    if summary["manually_downloaded"]:
+        print(f"  registered manual downloads: {summary['manually_downloaded']:,} (folder pdf_manual)")
+    print(f"  to download by hand: {summary['manual_list']:,} (manual_download.html, .csv, .ris)")
+    print("  status:", summary["status_counts"])
+    if summary["blocked_hosts"]:
+        print("  blocked hosts, never requested again (see blocked_hosts.json):", ", ".join(summary["blocked_hosts"]))
+    if summary["paused_hosts_this_run"]:
+        print("  hosts paused for this run only (rate limit, server busy or unreadable robots.txt):",
+              ", ".join(summary["paused_hosts_this_run"]))
+    print(f"  requests sent this run: {summary['requests_sent_this_run']:,}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=f"OpenAlex Literature Intelligence v{__version__}: discovery + SCImago historical enrichment + venue screening"
+        description=(f"OpenAlex Literature Intelligence v{__version__}: discovery + SCImago historical enrichment + "
+                     "venue screening + open-access full text")
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -355,6 +461,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--to-year", type=int, default=None, help=f"Default: config.json run.to_year, else {DEFAULT_TO_YEAR}")
     p_run.add_argument("--require-abstract", action="store_true", default=None, help="Default: config.json run.require_abstract, else off")
     p_run.add_argument("--max-per-query", type=int, default=None, help="Default: config.json run.max_per_query, else no limit")
+    p_run.add_argument(
+        "--search-field",
+        choices=list(SEARCH_FIELDS),
+        default=None,
+        help=(
+            "Where OpenAlex matches the query: search (title, abstract and full text where OpenAlex has it) or "
+            "title_and_abstract (title and abstract only; the query may not contain ',' or '|'). "
+            "Default: config.json run.search_field, else search"
+        ),
+    )
     p_run.add_argument(
         "--api-key",
         default="",
@@ -380,6 +496,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_inspect.add_argument("--issn", default="")
     p_inspect.add_argument("--output", type=Path)
     p_inspect.set_defaults(func=command_inspect_source)
+
+    p_fetch = sub.add_parser(
+        "fetch-oa",
+        help="Download open-access PDFs of a corpus; hosts that answer with a bot check are never retried",
+    )
+    p_fetch.add_argument("--config", type=Path, default=None, help=argparse.SUPPRESS)
+    p_fetch.add_argument("--input", type=Path, required=True, help="A run/enrich output: *_main.csv, *_enriched.csv/.jsonl or *_raw.csv")
+    p_fetch.add_argument("--output-dir", type=Path, default=None, help="Default: <input name>_fulltext next to the input file")
+    p_fetch.add_argument("--delay", type=float, default=DEFAULT_DELAY, help=f"Seconds between requests to one host (default {DEFAULT_DELAY}, minimum 1)")
+    p_fetch.add_argument("--timeout", type=float, default=REQUEST_TIMEOUT, help=f"Seconds per request (default {REQUEST_TIMEOUT})")
+    p_fetch.add_argument("--max-mb", type=float, default=DEFAULT_MAX_MB, help=f"Largest file accepted, in MB (default {DEFAULT_MAX_MB})")
+    p_fetch.add_argument("--limit", type=int, default=None, help="Try at most this many papers in this run (pilot)")
+    p_fetch.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Also retry papers that failed permanently before (HTTP 4xx, not a PDF, robots.txt); blocked hosts stay blocked",
+    )
+    p_fetch.set_defaults(func=command_fetch_oa)
 
     return parser
 

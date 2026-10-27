@@ -4,8 +4,9 @@ Precedence for every setting: CLI argument > config.json > code default. For the
 only, the legacy OPENALEX_API_KEY environment variable is still honoured after config.json
 (deprecated, kept so existing v3.0.x setups do not break).
 
-config.json holds the API key, so it is validated strictly (unknown sections/keys and wrong types
-are errors) and no error message ever echoes a value, or an unknown key name, from the file.
+config.json holds the API key, so it is validated strictly (unknown sections/keys, wrong types and
+values outside a fixed list are errors) and no error message ever echoes a value, or an unknown key
+name, from the file.
 """
 from __future__ import annotations
 
@@ -14,14 +15,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from .openalex import SEARCH_FIELDS
+
 CONFIG_FILENAME = "config.json"
 
 # section -> key -> allowed JSON types
 SCHEMA: Dict[str, Dict[str, Tuple[type, ...]]] = {
     "openalex": {"api_key": (str,), "email": (str,)},
     "scimago": {"manifest_url": (str,), "cache_dir": (str,)},
-    "run": {"from_year": (int,), "to_year": (int,), "require_abstract": (bool,), "max_per_query": (int, type(None))},
+    "run": {"from_year": (int,), "to_year": (int,), "require_abstract": (bool,), "max_per_query": (int, type(None)),
+            "search_field": (str,)},
 }
+# (section, key) -> allowed string values; an empty string still means "use the default"
+CHOICES: Dict[Tuple[str, str], Tuple[str, ...]] = {("run", "search_field"): SEARCH_FIELDS}
 _TYPE_NAMES = {str: "a string", int: "an integer", bool: "true/false", type(None): "null"}
 
 
@@ -88,6 +94,9 @@ def load_config(explicit_path: Optional[Path], default_dir: Path) -> Config:
             if not _type_ok(value, allowed):
                 expected = " or ".join(_TYPE_NAMES[t] for t in allowed)
                 raise ConfigError(f"{path}: '{section}.{key}' must be {expected}")
+            choices = CHOICES.get((section, key))
+            if choices and value.strip() and value.strip() not in choices:
+                raise ConfigError(f"{path}: '{section}.{key}' must be one of: {', '.join(choices)}")
             clean[key] = value.strip() if isinstance(value, str) else value
         data[section] = clean
 
