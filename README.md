@@ -12,6 +12,10 @@ query -> OpenAlex discovery -> deduplication -> SCImago 2010-2025 enrichment
       -> policy screening -> raw / enriched / main / excluded / audit outputs
 ```
 
+![OpenAlex Literature Intelligence v3.0.5 workflow: input, core processing, outputs and applications](docs/images/workflow_overview.png)
+
+Workflow overview. The exact output file names are listed under [Outputs](#outputs).
+
 ## What it does
 
 - **Discovery.** One or many OpenAlex queries, cursor paging, resume after interruption, and
