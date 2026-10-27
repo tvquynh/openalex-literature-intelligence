@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy this file to config.json (same folder) and fill in openalex.api_key. config.json is private: it is git-ignored and excluded from shared/return ZIPs. Precedence: CLI argument > config.json > built-in default. Empty strings mean 'use the default'. Relative cache_dir is relative to this file.",
+  "openalex": {
+    "api_key": "",
+    "email": ""
+  },
+  "scimago": {
+    "manifest_url": "https://scopus.cuatui.cloud/du-lieu/scimago/manifest.json",
+    "cache_dir": "cache/scimago"
+  },
+  "run": {
+    "from_year": 2010,
+    "to_year": 2026,
+    "require_abstract": false,
+    "max_per_query": null
+  }
+}

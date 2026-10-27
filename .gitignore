@@ -1,0 +1,16 @@
+# Private configuration: holds the real OpenAlex API key. Never commit or share it.
+# (config.example.json is NOT ignored: it is the public template.)
+config.json
+*.local.json
+.env
+
+# SCImago cache (re-downloaded and SHA-256 verified by `sync-scimago`)
+cache/
+data/scimago/
+
+# Python / environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.py[cod]
