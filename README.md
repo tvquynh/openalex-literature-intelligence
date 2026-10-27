@@ -1,6 +1,6 @@
 # OpenAlex Literature Intelligence
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-3.2.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-75%2F75-brightgreen)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-3.2.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-81%2F81-brightgreen)
 
 A command-line tool that turns a literature search into an auditable corpus. It finds works in
 [OpenAlex](https://openalex.org/), attaches SCImago venue data (SJR, quartiles, categories, estimated
@@ -109,7 +109,7 @@ Common screening options (for `run` and `enrich`):
 | Option | Effect on the main corpus |
 |---|---|
 | `--quartile Q1 --quartile Q2` | keep the selected quartiles |
-| `--quartile-basis publication` or `latest` | quartile of the publication year, or of the latest snapshot |
+| `--quartile-basis publication` or `latest` | quartile of the publication year (default), or of the latest snapshot; see [Papers newer than the SCImago data](#papers-newer-than-the-scimago-data) |
 | `--quartile-mode relevant-category --relevant-category "Software"` | use the quartile of the named categories instead of Best Quartile |
 | `--max-apc 1000` | keep venues with an estimated APC of at most 1000 USD |
 | `--require-doaj`, `--require-cwts-core` | keep sources that OpenAlex lists in DOAJ or in the CWTS Core list |
@@ -122,6 +122,38 @@ Common screening options (for `run` and `enrich`):
 Filters combine with AND. Records that fail a filter go to `_excluded.csv` with the reason, so a
 stricter or looser policy can be applied later with `enrich` without querying OpenAlex again.
 
+### Papers newer than the SCImago data
+
+The publication basis, the default, screens each paper by the quartile of the year it was published.
+The SCImago data end at 2025, so a 2026 paper has no publication-year quartile and fails a quartile
+filter on that basis. The tool never copies the 2025 quartile into the publication-year columns. When the
+source is in the latest snapshot (`ranking_basis = LATEST_AVAILABLE`), the paper's exclusion reasons are
+`QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE`, and `run` and `enrich` print a warning
+with the number of such papers:
+
+```text
+WARNING: SCImago data ends at 2025. 12 papers published after 2025 have no publication-year quartile and failed the current quartile filter (QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE). Use --quartile-basis latest if you intentionally want to screen them using the latest available SCImago snapshot (not a quartile of their publication year).
+```
+
+`_summary.json` always contains the same count, which is 0 without `--quartile` or with
+`--quartile-basis latest`:
+
+```json
+"quartile_filter_diagnostics": {
+  "quartile_filter": ["Q1", "Q2"],
+  "basis": "publication",
+  "mode": "best",
+  "scimago_latest_year": 2025,
+  "future_year_papers_without_publication_quartile": 12
+}
+```
+
+`--quartile-basis latest` screens every paper by the latest available snapshot. For a 2026 paper that is
+the 2025 quartile of its venue, not a 2026 quartile. The example above comes from `enrich` on 100 papers
+of a 2010-2026 query with `--all-source-types --quartile Q1 --quartile Q2`: 36 were published in 2026,
+12 of them in venues present in the 2025 snapshot, and the main corpus had 13 papers with the
+publication basis and 22 with the latest basis.
+
 ## Outputs
 
 For `--output pilot`:
@@ -133,7 +165,7 @@ For `--output pilot`:
 | `pilot_main.csv` | records that pass the active policy |
 | `pilot_excluded.csv` | the other records, with `main_exclusion_reasons` |
 | `pilot_source_audit.csv` | one row per OpenAlex source: status, match method, candidates, paper count |
-| `pilot_summary.json` | counts by status, source class, match method, quartile and ranking basis |
+| `pilot_summary.json` | counts by status, source class, match method, quartile and ranking basis; `quartile_filter_diagnostics` |
 | `pilot_run_metadata.json` | tool version, queries, search field, policy, manifest and environment; records whether a key was configured, never the key |
 | `pilot_checkpoint.json` | cursor and progress per query, used to resume |
 
@@ -275,7 +307,7 @@ OpenAlex. If you redistribute data or derived datasets, check the terms of those
 python -m unittest discover -s tests -v
 ```
 
-The 75 tests need neither network access nor an API key: they use a synthetic SCImago repository and
+The 81 tests need neither network access nor an API key: they use a synthetic SCImago repository and
 local servers with fake keys and simulated bot checks.
 
 ## Citation and license

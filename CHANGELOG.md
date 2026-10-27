@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+Clearer handling of papers published after the last SCImago year under a publication-basis quartile filter. Which papers enter the main corpus does not change.
+
+- With `--quartile` and `--quartile-basis publication` (the default basis), a paper published after the last SCImago year whose source is in the latest snapshot (`ranking_basis = LATEST_AVAILABLE`) now gets the exclusion reasons `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE` instead of `QUARTILE_UNAVAILABLE` alone. `QUARTILE_UNAVAILABLE` is kept for compatibility. The latest quartile is still never copied into the publication-year columns, and `LATEST_AVAILABLE` keeps its meaning.
+- `run` and `enrich` print a warning with the number of such papers and the last SCImago year, suggesting `--quartile-basis latest` for anyone who intends to screen them by the latest snapshot. No warning appears without `--quartile`, with `--quartile-basis latest`, or when no paper is affected.
+- `summary.json` always contains `quartile_filter_diagnostics`: the quartiles filtered on, basis, mode, `scimago_latest_year` and `future_year_papers_without_publication_quartile` (0 when no paper is affected). `run_metadata.json` already records the SCImago years and the quartile policy.
+- On 100 real records, compared with 3.2.0: the same main corpus byte for byte, the new reason on the 12 affected rows of `_excluded.csv`, and identical files with `--quartile-basis latest`.
+- 6 new offline tests: the precise reason (best and relevant-category modes), the latest basis, a paper inside the SCImago years, counts over mixed rows, the CLI warning for `enrich` and for `run`. Each was checked against deliberate faults. 81 tests in total.
+- Documentation: README, `docs/README_vi.md` and the user guide now describe how the publication and latest bases treat papers newer than the SCImago data.
+
 ## 3.2.0 - 2026-10-27
 One addition to `run`: the search field. Without the new option, `run` sends the same OpenAlex requests as 3.1.1, and `enrich` and `fetch-oa` are unchanged.
 

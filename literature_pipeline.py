@@ -12,7 +12,7 @@ from litintel.common import write_csv, write_json
 from litintel.config import Config, ConfigError, load_config
 from litintel.fulltext import DEFAULT_DELAY, DEFAULT_MAX_MB, REQUEST_TIMEOUT, fetch_open_access
 from litintel.openalex import SEARCH_FIELDS, search_query_problem
-from litintel.pipeline import enrich_existing_file, load_queries, run_pipeline
+from litintel.pipeline import FUTURE_YEAR_QUARTILE_REASON, enrich_existing_file, load_queries, run_pipeline
 from litintel.scimago import source_history
 from litintel.scimago_repo import (
     DEFAULT_MANIFEST_URL,
@@ -194,6 +194,21 @@ def print_quality_summary(summary: Dict[str, Any], args: argparse.Namespace) -> 
         print("  paper venue tier:", summary["paper_venue_tier_counts"])
 
 
+def print_quartile_warning(summary: Dict[str, Any]) -> None:
+    """Warn when a publication-basis quartile filter excluded papers published after the last SCImago year."""
+    diagnostics = summary.get("quartile_filter_diagnostics") or {}
+    count = diagnostics.get("future_year_papers_without_publication_quartile") or 0
+    if not count:
+        return
+    last = diagnostics.get("scimago_latest_year")
+    subject, them, their = ((f"1 paper published after {last} has", "it", "its") if count == 1
+                            else (f"{count:,} papers published after {last} have", "them", "their"))
+    print(f"  WARNING: SCImago data ends at {last}. {subject} no publication-year quartile and "
+          f"failed the current quartile filter ({FUTURE_YEAR_QUARTILE_REASON}). Use --quartile-basis latest if you "
+          f"intentionally want to screen {them} using the latest available SCImago snapshot (not a quartile of {their} "
+          "publication year).")
+
+
 def command_sync(args: argparse.Namespace) -> int:
     result = sync_repository(
         cache_dir=args.cache_dir,
@@ -290,6 +305,7 @@ def command_run(args: argparse.Namespace) -> int:
     if unmatched:
         print("  unmatched paper breakdown:", unmatched)
     print_quality_summary(summary, args)
+    print_quartile_warning(summary)
     for q in summary.get("openalex", {}).get("queries", []):
         if q.get("stopped_by_limit"):
             print(
@@ -335,6 +351,7 @@ def command_enrich(args: argparse.Namespace) -> int:
     if unmatched:
         print("  unmatched paper breakdown:", unmatched)
     print_quality_summary(summary, args)
+    print_quartile_warning(summary)
     if summary.get("duplicate_openalex_id_records"):
         print(f"  WARNING: input contains {summary['duplicate_openalex_id_records']} duplicate OpenAlex-ID records (kept, not removed).")
     print(f"\nOutput prefix: {args.output}")

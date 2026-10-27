@@ -57,6 +57,27 @@ def _quartile_from_row(row: Dict[str, Any], basis: str, mode: str) -> str:
     return safe_str(row.get(f"best_quartile_{suffix}"))
 
 
+# Added next to QUARTILE_UNAVAILABLE when a publication-basis quartile filter meets a paper published after the
+# last SCImago year: no publication-year quartile can exist, and the latest quartile is deliberately not used.
+FUTURE_YEAR_QUARTILE_REASON = "QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE"
+
+
+def _scimago_last_year(manifest: Dict[str, Any]) -> Optional[int]:
+    value = (manifest.get("sjr") or {}).get("last_year")
+    return int(value) if value not in (None, "") else None
+
+
+def _published_after_scimago(row: Dict[str, Any], last_year: Optional[int]) -> bool:
+    """A paper published after the last SCImago year whose source is in the latest snapshot (LATEST_AVAILABLE)."""
+    if row.get("ranking_basis") != "LATEST_AVAILABLE":
+        return False
+    try:
+        year = int(row.get("publication_year"))
+    except (TypeError, ValueError):
+        return False
+    return last_year is None or year > last_year
+
+
 def _observed_source_type(row: Dict[str, Any]) -> str:
     """SCImago latest type, else SCImago historical type, else the OpenAlex source type."""
     return safe_str(
@@ -106,6 +127,7 @@ def apply_main_policy(
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     source_types_norm = {x.casefold() for x in (source_types or []) if x}
     quartiles_norm = {x.upper() for x in (quartiles or []) if x}
+    last_year = _scimago_last_year(manifest)
     default_require_latest = bool(
         (manifest.get("policy") or {}).get("require_present_in_latest_scimago_for_main_corpus", True)
     )
@@ -137,6 +159,8 @@ def apply_main_policy(
             q = _quartile_from_row(row, quartile_basis, quartile_mode).upper()
             if not q:
                 reasons.append("QUARTILE_UNAVAILABLE")
+                if quartile_basis != "latest" and _published_after_scimago(row, last_year):
+                    reasons.append(FUTURE_YEAR_QUARTILE_REASON)
             elif q not in quartiles_norm:
                 reasons.append(f"QUARTILE_{q}_NOT_SELECTED")
 
@@ -337,6 +361,28 @@ def build_summary(rows: List[Dict[str, Any]], main: List[Dict[str, Any]], exclud
     }
 
 
+def quartile_filter_diagnostics(
+    excluded: List[Dict[str, Any]],
+    manifest: Dict[str, Any],
+    quartiles: Optional[List[str]] = None,
+    quartile_basis: str = "publication",
+    quartile_mode: str = "best",
+    **_other_policy: Any,
+) -> Dict[str, Any]:
+    """Summary block, always written: papers that fail the quartile filter only because they were published after
+    the last SCImago year (0 when no quartile filter is set or the basis is latest)."""
+    return {
+        "quartile_filter": sorted({q.upper() for q in (quartiles or []) if q}),
+        "basis": quartile_basis,
+        "mode": quartile_mode,
+        "scimago_latest_year": _scimago_last_year(manifest),
+        "future_year_papers_without_publication_quartile": sum(
+            1 for row in excluded
+            if FUTURE_YEAR_QUARTILE_REASON in safe_str(row.get("main_exclusion_reasons")).split("; ")
+        ),
+    }
+
+
 def _write_partitions(output_prefix: Path, enriched: List[Dict[str, Any]], main: List[Dict[str, Any]],
                       excluded: List[Dict[str, Any]]) -> Dict[str, str]:
     """Write enriched/main/excluded/audit files; main and excluded share the enriched column order."""
@@ -393,6 +439,7 @@ def enrich_existing_file(
     main, excluded = apply_main_policy(enriched, manifest, **policy_kwargs)
     outputs = _write_partitions(output_prefix, enriched, main, excluded)
     summary = build_summary(enriched, main, excluded)
+    summary["quartile_filter_diagnostics"] = quartile_filter_diagnostics(excluded, manifest, **policy_kwargs)
     if repository_state is not None:
         summary["scimago_repository"] = repository_state
     summary_json = Path(str(output_prefix) + "_summary.json")
@@ -488,6 +535,7 @@ def run_pipeline(
     outputs = _write_partitions(output_prefix, enriched, main, excluded)
 
     summary = build_summary(enriched, main, excluded)
+    summary["quartile_filter_diagnostics"] = quartile_filter_diagnostics(excluded, manifest, **policy_kwargs)
     summary["openalex"] = openalex_summary
     summary["scimago_repository"] = repo["state"]
     write_json(summary_json, summary)

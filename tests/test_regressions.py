@@ -27,7 +27,10 @@ sys.path.insert(0, str(ROOT))
 
 from litintel import openalex, scimago_repo  # noqa: E402
 from litintel.common import normalize_issn, normalize_quartile, read_csv, redact_secrets, split_issns  # noqa: E402
-from litintel.pipeline import apply_main_policy, build_summary, enrich_existing_file, source_audit  # noqa: E402
+from litintel.pipeline import (  # noqa: E402
+    FUTURE_YEAR_QUARTILE_REASON, apply_main_policy, build_summary, enrich_existing_file, quartile_filter_diagnostics,
+    source_audit,
+)
 from litintel.scimago import enrich_records, relevant_category_summary, source_history  # noqa: E402
 from litintel.venues import VenueTierError, VenueTiers  # noqa: E402
 
@@ -1551,6 +1554,121 @@ class TestQualitySignals(RepoCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot read the venue list", err)
         self.assertFalse(cache.exists())
+
+
+MANIFEST_2025 = {"sjr": {"first_year": 2010, "last_year": 2025, "latest_snapshot_year": 2025},
+                 "policy": {"require_present_in_latest_scimago_for_main_corpus": True}}
+
+
+def screened_row(pid: str, year: int, status: str = "ACTIVE_LATEST", basis: str = "", q_pub: str = "",
+                 q_latest: str = "Q1") -> Dict:
+    """An enriched row as enrich_records writes it when the SCImago data end at 2025."""
+    if not basis:
+        basis = "LATEST_AVAILABLE" if year > 2025 and status == "ACTIVE_LATEST" else "EXACT_PUBLICATION_YEAR"
+    return {"openalex_id": pid, "publication_year": str(year), "source": "Alpha Journal", "source_type": "journal",
+            "source_status": status, "scimago_type_latest": "journal", "ranking_basis": basis,
+            "best_quartile_at_publication": q_pub, "best_quartile_latest": q_latest,
+            "relevant_category_quartile_at_publication": q_pub, "relevant_category_quartile_latest": q_latest}
+
+
+class TestFutureYearQuartile(RepoCase):
+    """A publication-basis quartile filter and papers published after the last SCImago year."""
+
+    @staticmethod
+    def screen(rows, **policy):
+        main, excluded = apply_main_policy(rows, MANIFEST_2025, **policy)
+        return main, excluded, quartile_filter_diagnostics(excluded, MANIFEST_2025, **policy)
+
+    def test_a_future_year_paper_fails_publication_basis_with_a_precise_reason(self):
+        for mode in ("best", "relevant-category"):
+            row = screened_row("p2026", 2026)
+            main, excluded, diag = self.screen([row], quartiles=["Q1"], quartile_basis="publication", quartile_mode=mode)
+            self.assertEqual(main, [], mode)
+            reasons = excluded[0]["main_exclusion_reasons"].split("; ")
+            self.assertIn(FUTURE_YEAR_QUARTILE_REASON, reasons)
+            self.assertIn("QUARTILE_UNAVAILABLE", reasons)  # kept for compatibility
+            self.assertEqual((row["best_quartile_at_publication"], row["ranking_basis"]), ("", "LATEST_AVAILABLE"))
+            self.assertEqual(diag["future_year_papers_without_publication_quartile"], 1)
+
+    def test_b_same_paper_passes_with_latest_basis(self):
+        main, _, diag = self.screen([screened_row("p2026", 2026)], quartiles=["Q1"], quartile_basis="latest")
+        self.assertEqual([(r["openalex_id"], r["main_exclusion_reasons"]) for r in main], [("p2026", "")])
+        self.assertEqual(diag["future_year_papers_without_publication_quartile"], 0)
+
+    def test_c_publication_year_within_scimago_passes_normally(self):
+        main, _, diag = self.screen([screened_row("p2025", 2025, q_pub="Q1")], quartiles=["Q1"])
+        self.assertEqual([(r["openalex_id"], r["main_exclusion_reasons"]) for r in main], [("p2025", "")])
+        self.assertEqual((diag["future_year_papers_without_publication_quartile"], diag["scimago_latest_year"]), (0, 2025))
+
+    def test_e_summary_counts_only_the_affected_papers(self):
+        rows = [screened_row("a", 2026), screened_row("b", 2026, q_latest="Q2"), screened_row("c", 2027, q_latest=""),
+                screened_row("d", 2026, status="HISTORICAL_ONLY", basis="UNAVAILABLE", q_latest=""),
+                screened_row("e", 2025, q_pub="Q3"), screened_row("f", 2024)]
+        main, excluded, diag = self.screen([dict(r) for r in rows], quartiles=["Q1"], include_historical_only=True)
+        reasons = {r["openalex_id"]: r["main_exclusion_reasons"] for r in excluded}
+        self.assertEqual(main, [])
+        self.assertEqual(diag, {"quartile_filter": ["Q1"], "basis": "publication", "mode": "best",
+                                "scimago_latest_year": 2025, "future_year_papers_without_publication_quartile": 3})
+        self.assertEqual(sorted(k for k, v in reasons.items() if FUTURE_YEAR_QUARTILE_REASON in v), ["a", "b", "c"])
+        self.assertEqual(reasons["d"], "QUARTILE_UNAVAILABLE")  # no latest metadata: the generic reason only
+        self.assertEqual(reasons["e"], "QUARTILE_Q3_NOT_SELECTED")
+        self.assertEqual(reasons["f"], "QUARTILE_UNAVAILABLE")  # within the SCImago years, no quartile assigned
+        for policy in ({}, {"quartiles": ["Q1"], "quartile_basis": "latest"}):
+            _, _, diag = self.screen([dict(r) for r in rows], include_historical_only=True, **policy)
+            self.assertEqual(diag["future_year_papers_without_publication_quartile"], 0, policy)
+
+    def test_d_cli_warns_only_for_a_publication_basis_quartile_filter(self):
+        tmp = Path(self.tmp.name)
+        src = tmp / "in.csv"
+        rows = corpus()
+        with src.open("w", encoding="utf-8-sig", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+        proj = make_project_copy(tmp)
+        runs = {}
+        for name, extra in (("none", []), ("pub", ["--quartile", "Q1"]),
+                            ("latest", ["--quartile", "Q1", "--quartile-basis", "latest"])):
+            code, out, err = run_cli(proj, ["enrich", "--offline", "--cache-dir", str(self.dir), "--input", str(src),
+                                            "--output", str(tmp / name)] + extra)
+            self.assertEqual(code, 0, err)
+            summary = json.loads((tmp / f"{name}_summary.json").read_text(encoding="utf-8"))
+            enriched = {r["openalex_id"]: r for r in read_csv(tmp / f"{name}_enriched.csv")}
+            runs[name] = (out, summary["quartile_filter_diagnostics"], enriched)
+        # The synthetic SCImago data end at 2023; p03 (latest Q1) and p13 (latest Q3) are 2026 papers of ACTIVE_LATEST sources.
+        out, diag, enriched = runs["pub"]
+        self.assertIn("WARNING: SCImago data ends at 2023. 2 papers published after 2023 have no publication-year quartile", out)
+        self.assertEqual(diag["future_year_papers_without_publication_quartile"], 2)
+        self.assertEqual(sorted(k for k, r in enriched.items() if FUTURE_YEAR_QUARTILE_REASON in r["main_exclusion_reasons"]),
+                         ["p03", "p13"])
+        self.assertEqual(enriched["p03"]["best_quartile_at_publication"], "")
+        for name in ("none", "latest"):
+            out, diag, enriched = runs[name]
+            self.assertNotIn("SCImago data ends at", out)
+            self.assertEqual(diag["future_year_papers_without_publication_quartile"], 0)
+            self.assertFalse(any(FUTURE_YEAR_QUARTILE_REASON in r["main_exclusion_reasons"] for r in enriched.values()))
+        self.assertEqual(runs["latest"][2]["p03"]["main_corpus"], "True")
+        self.assertEqual(runs["none"][1], {"quartile_filter": [], "basis": "publication", "mode": "best",
+                                           "scimago_latest_year": 2023, "future_year_papers_without_publication_quartile": 0})
+        meta = json.loads((tmp / "pub_run_metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual((meta["scimago_last_year"], meta["policy"]["quartiles"], meta["policy"]["quartile_basis"]),
+                         (2023, ["Q1"], "publication"))
+
+    def test_run_prints_the_same_warning(self):
+        tmp = Path(self.tmp.name)
+        with serve(self.dir) as (base_url, _), fake_openalex():
+            self.manifest["base_url"] = base_url
+            (self.dir / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
+            cfg = {"openalex": {"api_key": "FAKEKEY_NEVER_PRINT_42"},
+                   "scimago": {"manifest_url": base_url + "manifest.json", "cache_dir": "cache/scimago"}}
+            proj = make_project_copy(tmp, cfg)
+            out_prefix = tmp / "run" / "x"
+            code, out, err = run_cli(proj, ["run", "--query", "q", "--quartile", "Q1", "--output", str(out_prefix)])
+        self.assertEqual(code, 0, err)
+        # the three fake OpenAlex works are 2024 papers in Alpha Journal (latest Q1)
+        self.assertIn("WARNING: SCImago data ends at 2023. 3 papers published after 2023 have", out)
+        summary = json.loads(Path(str(out_prefix) + "_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["quartile_filter_diagnostics"]["future_year_papers_without_publication_quartile"], 3)
 
 
 if __name__ == "__main__":

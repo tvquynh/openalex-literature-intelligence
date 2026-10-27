@@ -235,7 +235,7 @@ The user can change that policy with --include-historical-only, --any-source-sta
 | \*_main.csv | Records that pass the active screening policy. | Main corpus for review/analysis. |
 | \*_excluded.csv | Records excluded from main + main_exclusion_reasons. | Audit exclusions and adjust policy. |
 | \*_source_audit.csv | One row per OpenAlex source with status/method/candidate/paper count. | Inspect source-matching quality. |
-| \*_summary.json | Counts by status, source class, match method, quartile, ranking basis. | Quick corpus-quality summary. |
+| \*_summary.json | Counts by status, source class, match method, quartile, ranking basis; quartile filter diagnostics. | Quick corpus-quality summary. |
 | \*_run_metadata.json | Query, years, config, version, repository/checksum state, environment. | Provenance and reproducibility. |
 | \*_checkpoint.json | Cursor and progress per query. | Resume incomplete collection. |
 
@@ -587,7 +587,7 @@ python literature_pipeline.py run `
   --output PE_Malware_Q1_Q2
 ```
 
-A 2026 paper cannot have a publication-year 2026 quartile while the latest SCImago snapshot is 2025, so it will not pass a publication-basis Q1/Q2 filter.
+The publication basis, the default, screens each paper by the quartile of the year it was published. The SCImago data end at 2025, so a 2026 paper has no publication-year quartile and fails a publication-basis Q1/Q2 filter; the tool never copies the 2025 quartile into the publication-year columns. When the source is in the latest snapshot (ranking_basis LATEST_AVAILABLE), the exclusion reasons are QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE, run and enrich print a warning with the number of such papers, and summary.json counts them under quartile_filter_diagnostics (0 when no paper is affected). --quartile-basis latest (section 11.5) screens these papers by the latest available snapshot, which for a 2026 paper is the 2025 quartile of its venue, not a 2026 quartile.
 
 ### 11.5. Latest quartile
 
@@ -745,7 +745,7 @@ The checkpoint stores the year range and the abstract requirement of every query
 | &lt;prefix&gt;_main.csv | Papers passing the active policy and every enabled filter. |
 | &lt;prefix&gt;_excluded.csv | Papers not in main, with main_exclusion_reasons. |
 | &lt;prefix&gt;_source_audit.csv | One row per OpenAlex source with status/method/candidates/diagnostic/paper_count. |
-| &lt;prefix&gt;_summary.json | Paper and unique-source counts by status, class, method, quartile, and ranking basis. |
+| &lt;prefix&gt;_summary.json | Paper and unique-source counts by status, class, method, quartile, and ranking basis; quartile_filter_diagnostics counts the papers that fail a publication-basis quartile filter because they were published after the last SCImago year. |
 | &lt;prefix&gt;_run_metadata.json | Tool version, query, policy, manifest, environment, and configuration source; never the API key value. |
 
 ### 15.1. Important enriched fields
@@ -786,6 +786,7 @@ UNMATCHED only means the tool could not establish a sufficiently reliable mappin
 | SOURCE_STATUS_UNMATCHED / AMBIGUOUS / HISTORICAL_ONLY | Status is not accepted by the current policy. |
 | SOURCE_TYPE_FILTER | SCImago source type is not in the allowed list. |
 | QUARTILE_UNAVAILABLE | No quartile exists for the requested basis/mode. |
+| QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE | Added to QUARTILE_UNAVAILABLE with --quartile-basis publication when the paper was published after the last SCImago year and its source is in the latest snapshot (ranking_basis LATEST_AVAILABLE). |
 | QUARTILE_Qx_NOT_SELECTED | Quartile exists but is not one of the selected quartiles. |
 | APC_UNAVAILABLE | No APC estimate is available while --max-apc is active. |
 | APC_ABOVE_LIMIT | Estimated APC exceeds the ceiling. |
@@ -911,7 +912,7 @@ The mirror operator adds the new annual file, updates manifest first_year/last_y
 | Very high UNMATCHED | Inspect source_audit.csv and source_class; repositories/conferences/ebooks often do not fit journal policy. |
 | ISSN_CONFLICT | Review candidates manually; the tool intentionally rejects title-only matching when identifiers contradict. |
 | 2026 paper has no publication-year Q | Correct design while latest SCImago is 2025; latest metadata may still be available. |
-| Q1/Q2 publication filter removes 2026 papers | Expected; use --quartile-basis latest if your question concerns latest quartile. |
+| Q1/Q2 publication filter removes 2026 papers | Expected: such papers get QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE, and run and enrich print a warning with their number. Use --quartile-basis latest if your question concerns the latest quartile, which is not a 2026 quartile. |
 | APC filter excludes too much | APC_UNAVAILABLE means the snapshot has no estimate, not that the journal is necessarily expensive. |
 | Checkpoint parameters changed | The year range or abstract setting of a query changed under the same output prefix; use a new prefix or --no-resume. |
 | Conference absent in one annual file | Do not infer discontinuation; SCImago conference coverage varies strongly by year. |
