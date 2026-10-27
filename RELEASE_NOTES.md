@@ -78,7 +78,7 @@ OpenAlex Literature Intelligence finds literature in OpenAlex and enriches each 
 4. Conference coverage in SCImago varies substantially across years. A conference missing from one year is not evidence of Scopus discontinuation.
 5. SCImago presence is not identical to official current Scopus status. SCImago absence is not evidence that a venue is predatory.
 6. `fwci` and `citation_normalized_percentile` are computed by OpenAlex at query time and change as citations accrue; a venue tier reflects only the list you give.
-6. APC values are 2025 snapshot estimates, not guaranteed publisher prices.
-7. Strict ISSN conflict protection may prefer false negatives over false-positive venue matches; review `TITLE_MATCH_ISSN_CONFLICT` rows in `source_audit.csv`.
-8. The SCImago mirror repeats the current H-index in every year, so `h_index_at_publication` is not a historical H-index.
-9. The mirror's server `manifest.json` still lists only four matching methods. This is documentation only; the client does not read it.
+7. APC values are 2025 snapshot estimates, not guaranteed publisher prices.
+8. Strict ISSN conflict protection may prefer false negatives over false-positive venue matches; review `TITLE_MATCH_ISSN_CONFLICT` rows in `source_audit.csv`.
+9. The SCImago mirror repeats the current H-index in every year, so `h_index_at_publication` is not a historical H-index.
+10. The mirror's server `manifest.json` still lists only four matching methods. This is documentation only; the client does not read it.
