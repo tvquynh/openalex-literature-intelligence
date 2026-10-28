@@ -1,8 +1,8 @@
-# OpenAlex Literature Intelligence v4.0.0: Comprehensive User Guide
+# OpenAlex Literature Intelligence v4.1.0: Comprehensive User Guide
 
 Collect, enrich, screen, and audit scientific literature with OpenAlex and historical SCImago data (2010-2025): SJR, quartiles, source status, estimated APC, and a reproducible audit trail.
 
-Release 4.0.0, 28 October 2026. This Markdown file is generated from [OpenAlex_Literature_Intelligence_User_Guide.docx](OpenAlex_Literature_Intelligence_User_Guide.docx); both have the same content.
+Release 4.1.0, 28 October 2026. This Markdown file is generated from [OpenAlex_Literature_Intelligence_User_Guide.docx](OpenAlex_Literature_Intelligence_User_Guide.docx); both have the same content.
 
 ## Contents
 
@@ -235,6 +235,7 @@ The user can change that policy with --include-historical-only, --any-source-sta
 | \*_main.csv | Records that pass the active screening policy. | Main corpus for review/analysis. |
 | \*_excluded.csv | Records excluded from main + main_exclusion_reasons. | Audit exclusions and adjust policy. |
 | \*_source_audit.csv | One row per OpenAlex source with status/method/candidate/paper count. | Inspect source-matching quality. |
+| \*_preprints.csv | Preprints and repository records, most cited first, with the enriched columns. | Screen preprints by hand (Appendix H.7). |
 | \*_summary.json | Counts by status, source class, match method, quartile, ranking basis; quartile filter diagnostics. | Quick corpus-quality summary. |
 | \*_run_metadata.json | Query, years, config, version, repository/checksum state, environment. | Provenance and reproducibility. |
 | \*_checkpoint.json | Cursor and progress per query. | Resume incomplete collection. |
@@ -432,6 +433,8 @@ Configuration precedence is: CLI argument &gt; config.json &gt; built-in default
 | run.require_abstract | boolean | Whether an abstract is required by default. |
 | run.max_per_query | integer/null | Per-query retrieval limit; null means no explicit limit. |
 | run.search_field | string | search or title_and_abstract; code default is search (Appendix I). |
+| screening.venue_tiers | string | Venue list used as --venue-tiers by run and enrich; relative to config.json if relative; default none. |
+| screening.admit_tiers | list of strings | Tiers admitted to the main corpus, as --admit-tier; needs screening.venue_tiers; default none (Appendix H.6). |
 
 > **Security**  
 > config.json is ignored by Git and must not be included in public ZIPs. Avoid --api-key on the command line because shell history/process listings can expose it. If a key has been shared outside your control, rotate it.
@@ -747,6 +750,7 @@ The checkpoint stores the year range and the abstract requirement of every query
 | &lt;prefix&gt;_main.csv | Papers passing the active policy and every enabled filter. |
 | &lt;prefix&gt;_excluded.csv | Papers not in main, with main_exclusion_reasons. |
 | &lt;prefix&gt;_source_audit.csv | One row per OpenAlex source with status/method/candidates/diagnostic/paper_count. |
+| &lt;prefix&gt;_preprints.csv | Works typed as preprints or from a repository source (arXiv, Zenodo, university archives), most cited first; same columns as the enriched file. |
 | &lt;prefix&gt;_summary.json | Paper and unique-source counts by status, class, method, quartile, and ranking basis; quartile_filter_diagnostics counts the papers that fail a publication-basis quartile filter because they were published after the last SCImago year. |
 | &lt;prefix&gt;_run_metadata.json | Tool version, query, policy, manifest, environment, and configuration source; never the API key value. |
 
@@ -987,7 +991,9 @@ The mirror operator adds the new annual file, updates manifest first_year/last_y
 | --require-doaj | Require source_is_in_doaj=True. |
 | --require-cwts-core | Require source_is_core=True. |
 | --exclude-retracted | Exclude works marked as retracted by OpenAlex. |
-| --venue-tiers FILE | Label papers with venue tiers from your list; no filtering. |
+| --venue-tiers FILE | Label papers with venue tiers from your list; filters nothing by itself. |
+| --admit-tier TIER | Admit venues of this tier even when the venue filters would exclude them; repeatable (Appendix H.6). |
+| --no-admit-tiers | Admit no tier, overriding screening.admit_tiers in config.json. |
 | --query TEXT | OpenAlex query; repeatable. |
 | --query-file FILE | One query per line; # introduces comments. |
 | --from-year N | Start year. |
@@ -1295,7 +1301,7 @@ The first command is a pilot that tries 20 papers; the second processes the whol
 
 ### G.1. How requests are made
 
-- Requests are sent one at a time, at least --delay seconds apart for the same host (default 2 s, minimum 1 s), with the User-Agent OpenAlexLiteratureIntelligence/4.0.0 and a link to the project repository.
+- Requests are sent one at a time, at least --delay seconds apart for the same host (default 2 s, minimum 1 s), with the User-Agent OpenAlexLiteratureIntelligence/4.1.0 and a link to the project repository.
 - robots.txt is read once per host and run, following redirects, with RFC 9309 matching (longest rule wins, \* and $ wildcards). A path it disallows is never requested (ROBOTS_DISALLOWED), a Crawl-delay longer than --delay is honoured (up to 60 s), and a host whose robots.txt cannot be read is skipped for that run (ROBOTS_UNREACHABLE).
 - Redirects are followed one hop at a time, so a link through doi.org never reaches a host that is already blocked.
 - A response is kept only if it is a complete PDF (it starts with %PDF- and ends with %%EOF) of at most --max-mb megabytes (default 100); a cut-off file is discarded (TRUNCATED) and tried again on the next run.
@@ -1380,6 +1386,27 @@ python literature_pipeline.py enrich --input thesis_literature_raw.jsonl --outpu
 - Conference papers printed in a book series such as Lecture Notes in Computer Science carry the series as their OpenAlex source, so such a conference cannot be recognised by name; tier those papers by hand.
 - Prefer ISSNs for journals: two journals can share a title (for example Electronics), but not an ISSN.
 - After a first run, look at the UNLISTED sources with the most papers in _source_audit.csv and extend the list. Record the list and its SHA-256 in your protocol.
+
+### H.6. Admitting listed venues to the main corpus
+
+The default main corpus keeps journals of the latest SCImago snapshot. Many strong conferences are absent from SCImago, and those present have no quartile, so the default policy and any quartile filter exclude them. Since v4.1.0, --admit-tier admits every paper whose venue has the given tier in your list, even when the SCImago status, source-type or quartile filters would exclude it; repeat the option for several tiers. The APC, DOAJ, CWTS Core and retraction filters still apply.
+
+```text
+python literature_pipeline.py enrich --input thesis_literature_raw.jsonl --output thesis_ab --venue-tiers my_venues.tsv --admit-tier A --admit-tier B
+```
+
+- main_admission_tier holds the admitted tier and main_waived_reasons the venue filters that were set aside; both columns exist only when --admit-tier is used.
+- summary.json counts the papers admitted this way under admission_by_venue_tier.
+- A tier missing from the list, a reserved name (UNLISTED, AMBIGUOUS), or --admit-tier without a list stops run or enrich before any download.
+- screening.venue_tiers and screening.admit_tiers in config.json make the list and the admitted tiers defaults; --no-admit-tiers turns admission off for a journal-only view.
+
+On 100 papers of a live 2010-2026 query, a list with the major security and machine-learning conferences in tiers A and B raised the main corpus from 25 to 38 papers, all 13 from conferences. Check that the list's names match the source names that OpenAlex uses: a phrase with one extra word matches nothing.
+
+### H.7. Preprints for manual screening
+
+Preprints are not admitted wholesale: most are not peer reviewed, and the same work often appears later in a journal or a conference. Every run and enrich writes &lt;output&gt;_preprints.csv with the works that OpenAlex types as preprints or whose source is a repository (arXiv, Zenodo, a university archive), most cited first: the top-10% citation flag, then the citation percentile, then the citation count. The file has the enriched columns, so fetch-oa can read it, and summary.json reports the counts under preprints. Important preprints, such as datasets released only on arXiv, are best reached through the papers that cite them.
+
+OpenAlex sometimes gives a repository copy as the primary location of a paper that appeared at a conference or in a journal, for example a university archive for a USENIX Security paper. The tool reads the source of the primary location only, so such a paper is listed in _preprints.csv and is not admitted by --admit-tier, even when its venue is in your list. When screening the preprint list, look for the published version of each work.
 
 ## Appendix I. Choosing where OpenAlex matches the query
 

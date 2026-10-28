@@ -1,4 +1,4 @@
-# Quick Start - Windows 11 (OpenAlex Literature Intelligence v4.0.0)
+# Quick Start - Windows 11 (OpenAlex Literature Intelligence v4.1.0)
 
 ```powershell
 git clone https://github.com/tvquynh/openalex-literature-intelligence.git C:\OpenAlexV3
@@ -75,15 +75,17 @@ python literature_pipeline.py run `
 
 Mặc định (`search`), OpenAlex khớp cả toàn văn nên số kết quả lớn hơn nhiều. Với `title_and_abstract`, query không được chứa dấu `,` hoặc `|`; muốn dùng mặc định này cho mọi lần chạy thì đặt `"search_field": "title_and_abstract"` trong mục `run` của `config.json`. Mỗi bài cũng có thêm cột `is_retracted`, `fwci` và `citation_normalized_percentile` từ OpenAlex.
 
-Gắn tầng nguồn công bố theo danh sách của riêng bạn (không loại bài nào; file mẫu chỉ minh họa định dạng):
+Gắn tầng nguồn công bố theo danh sách của riêng bạn, và (từ v4.1.0) nhận vào main corpus các nguồn tầng A, kể cả hội nghị không có trong SCImago (file mẫu chỉ minh họa định dạng):
 
 ```powershell
 python literature_pipeline.py enrich `
   --input PE_Malware_TA_raw.jsonl `
   --output PE_Malware_TA_tiers `
-  --all-source-types `
-  --venue-tiers examples\venue_tiers_example.tsv
+  --venue-tiers examples\venue_tiers_example.tsv `
+  --admit-tier A
 ```
+
+Mỗi lần chạy còn ghi `PE_Malware_TA_tiers_preprints.csv`: preprint và bản ghi từ kho lưu trữ như arXiv, bài được trích dẫn nhiều xếp trước, để sàng lọc tay.
 
 Tải PDF truy cập mở (không cần API key; chạy thử 20 bài trước):
 

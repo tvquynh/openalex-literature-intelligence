@@ -14,7 +14,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .common import normalize_issn, safe_str, short_openalex_id, split_issns
 
@@ -174,3 +174,20 @@ class VenueTiers:
             "venues": len(self.venues),
             "tiers": sorted({venue.tier for venue in self.venues}),
         }
+
+
+def admit_tier_problem(admit_tiers: Iterable[str], tiers: Optional[VenueTiers]) -> Optional[str]:
+    """Why the tiers given to --admit-tier cannot be used with this venue list, or None."""
+    wanted = [tier for tier in admit_tiers if tier]
+    if not wanted:
+        return None
+    if tiers is None:
+        return "--admit-tier needs a venue list (--venue-tiers, or screening.venue_tiers in config.json)"
+    reserved = sorted({tier for tier in wanted if tier.upper() in RESERVED_TIERS})
+    if reserved:
+        return f"{', '.join(reserved)} cannot be admitted: those papers are not decided by the list"
+    known = {venue.tier for venue in tiers.venues}
+    missing = sorted(set(wanted) - known)
+    if missing:
+        return f"tier {', '.join(missing)} is not in {tiers.path} (its tiers: {', '.join(sorted(known))})"
+    return None

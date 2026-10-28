@@ -28,8 +28,8 @@ sys.path.insert(0, str(ROOT))
 from litintel import openalex, scimago_repo  # noqa: E402
 from litintel.common import normalize_issn, normalize_quartile, read_csv, redact_secrets, split_issns  # noqa: E402
 from litintel.pipeline import (  # noqa: E402
-    FUTURE_YEAR_QUARTILE_REASON, apply_main_policy, build_summary, enrich_existing_file, quartile_filter_diagnostics,
-    source_audit,
+    FUTURE_YEAR_QUARTILE_REASON, admission_summary, apply_main_policy, build_summary, enrich_existing_file,
+    quartile_filter_diagnostics, source_audit,
 )
 from litintel.scimago import enrich_records, relevant_category_summary, source_history  # noqa: E402
 from litintel.venues import VenueTierError, VenueTiers  # noqa: E402
@@ -1686,6 +1686,163 @@ class TestFutureYearQuartile(RepoCase):
         self.assertNotIn("SCImago data ends at", out_default)
         summary = json.loads(Path(str(default_prefix) + "_summary.json").read_text(encoding="utf-8"))
         self.assertEqual((summary["main_corpus_records"], summary["quartile_filter_diagnostics"]["basis"]), (3, "latest"))
+
+
+ADMIT_LIST = (
+    "tier\tvenue\tissn\ttitle_contains\n"
+    "A\tConf Proc\t\tconf proc\n"
+    "A\tUnknown Venue\t9999-9999\t\n"
+    "B\tAlpha Journal\t1111-1111\t\n"
+    "C\tOld Name\t\told name\n"
+)
+
+
+def admitted_row(pid: str, tier: str, status: str = "UNMATCHED", stype: str = "conference", q_latest: str = "",
+                 **extra) -> Dict:
+    """An enriched row with a venue tier, as apply_main_policy receives it."""
+    row = {"openalex_id": pid, "publication_year": "2024", "source": f"Venue {pid}", "source_type": stype,
+           "source_status": status, "scimago_type_latest": "journal" if stype == "journal" else "",
+           "ranking_basis": "EXACT_PUBLICATION_YEAR", "best_quartile_at_publication": q_latest,
+           "best_quartile_latest": q_latest, "venue_tier": tier}
+    row.update(extra)
+    return row
+
+
+class TestAdmissionAndPreprints(RepoCase):
+    """--admit-tier waives the venue filters for listed venues; preprints are listed for manual screening."""
+
+    def write_list(self, text=ADMIT_LIST, name="admit.tsv"):
+        path = Path(self.tmp.name) / name
+        path.write_text(text, encoding="utf-8-sig")
+        return path
+
+    def test_admit_tier_waives_only_the_venue_filters(self):
+        rows = [admitted_row("conf_a", "A"),
+                admitted_row("conf_a_retracted", "A", is_retracted=True),
+                admitted_row("conf_c", "C"),
+                admitted_row("journal_a", "A", status="ACTIVE_LATEST", stype="journal", q_latest="Q1"),
+                admitted_row("ambiguous", "AMBIGUOUS")]
+        policy = {"quartiles": ["Q1"], "source_types": ["journal"], "exclude_retracted": True}
+        main, excluded = apply_main_policy([dict(r) for r in rows], MANIFEST_2025, admit_tiers=["A"], **policy)
+        by_id = {r["openalex_id"]: r for r in main + excluded}
+        self.assertEqual(sorted(r["openalex_id"] for r in main), ["conf_a", "journal_a"])
+        venue_reasons = "SOURCE_STATUS_UNMATCHED; SOURCE_TYPE_FILTER; QUARTILE_UNAVAILABLE"
+        self.assertEqual((by_id["conf_a"]["main_admission_tier"], by_id["conf_a"]["main_waived_reasons"]), ("A", venue_reasons))
+        self.assertEqual(by_id["conf_a"]["main_exclusion_reasons"], "")
+        # the retraction filter is not a venue filter: still excluded, with the venue reasons recorded as waived
+        self.assertEqual(by_id["conf_a_retracted"]["main_exclusion_reasons"], "RETRACTED")
+        self.assertEqual(by_id["conf_a_retracted"]["main_waived_reasons"], venue_reasons)
+        self.assertEqual((by_id["conf_c"]["main_admission_tier"], by_id["conf_c"]["main_exclusion_reasons"]), ("", venue_reasons))
+        self.assertEqual((by_id["journal_a"]["main_admission_tier"], by_id["journal_a"]["main_waived_reasons"]), ("A", ""))
+        self.assertEqual(by_id["ambiguous"]["main_admission_tier"], "")
+        # APC, DOAJ and CWTS Core are user requirements, not venue filters: they are not waived
+        main, excluded = apply_main_policy([admitted_row("conf_a", "A")], MANIFEST_2025, admit_tiers=["A"],
+                                           max_apc=1000, require_doaj=True, require_cwts_core=True)
+        self.assertEqual(main, [])
+        self.assertEqual(excluded[0]["main_exclusion_reasons"], "APC_UNAVAILABLE; NOT_IN_DOAJ; NOT_IN_CWTS_CORE")
+        self.assertEqual(excluded[0]["main_waived_reasons"], "SOURCE_STATUS_UNMATCHED")  # no source-type filter here
+        summary = admission_summary(main + excluded, ["A"])
+        self.assertEqual(summary, {"admit_tiers": ["A"], "papers_in_admitted_tiers": 1,
+                                   "papers_admitted_by_waiving_venue_filters": {}})
+        # without --admit-tier nothing changes and no admission column is added
+        main, excluded = apply_main_policy([dict(r) for r in rows], MANIFEST_2025, **policy)
+        self.assertEqual(sorted(r["openalex_id"] for r in main), ["journal_a"])
+        self.assertFalse(any("main_admission_tier" in r or "main_waived_reasons" in r for r in main + excluded))
+
+    def test_admit_tier_is_checked_before_any_network_access(self):
+        tmp = Path(self.tmp.name)
+        venue_file = self.write_list()
+        proj = make_project_copy(tmp)
+        cache = tmp / "must_not_be_created"
+        cases = [([], "needs a venue list"),
+                 (["--venue-tiers", str(venue_file)], "tier Z is not in"),
+                 (["--venue-tiers", str(venue_file), "--admit-tier", "UNLISTED"], "cannot be admitted")]
+        for extra, expected in cases:
+            argv = ["enrich", "--cache-dir", str(cache), "--input", str(venue_file), "--output", str(tmp / "x")] + extra
+            if "--admit-tier" not in extra:
+                argv += ["--admit-tier", "Z" if extra else "A"]
+            code, _, err = run_cli(proj, argv)
+            self.assertEqual(code, 2, expected)
+            self.assertIn(expected, err)
+            self.assertFalse(cache.exists())
+        with fake_openalex() as handler:
+            cfg = {"openalex": {"api_key": "FAKEKEY_NEVER_PRINT_42"}}
+            code, _, err = run_cli(make_project_copy(tmp, cfg), ["run", "--query", "q", "--cache-dir", str(cache),
+                                                                 "--admit-tier", "A"])
+            self.assertEqual(handler.calls, [])
+        self.assertEqual(code, 2)
+        self.assertIn("needs a venue list", err)
+        self.assertFalse(cache.exists())
+
+    def test_screening_defaults_come_from_config(self):
+        tmp = Path(self.tmp.name)
+        self.write_list()
+        proj = make_project_copy(tmp, {"screening": {"venue_tiers": "../admit.tsv", "admit_tiers": ["A", "B"]}})
+        cli = load_cli(proj)
+        from litintel.config import load_config
+        config = load_config(None, proj)
+        for argv, expected, source in ((["enrich", "--input", "x", "--output", "y"], ["A", "B"], "config.json"),
+                                       (["enrich", "--input", "x", "--output", "y", "--admit-tier", "B"], ["B"], "cli"),
+                                       (["enrich", "--input", "x", "--output", "y", "--no-admit-tiers"], [], "cli")):
+            args = cli.build_parser().parse_args(argv)
+            sources = cli.resolve_settings(args, config)
+            self.assertEqual((args.admit_tiers, sources["admit_tiers"]), (expected, source), argv)
+            self.assertEqual(args.venue_tiers.resolve(), (tmp / "admit.tsv").resolve())
+        planted = "PLANTED_TIER_NEVER_ECHO_77"
+        for screening, expected in (({"admit_tiers": planted}, "'screening.admit_tiers' must be a list of strings"),
+                                    ({"admit_tiers": [planted, ""]}, "must be a list of non-empty strings"),
+                                    ({"venue_tiers": 5}, "'screening.venue_tiers' must be a string")):
+            code, out, err = run_cli(make_project_copy(tmp, {"screening": screening}),
+                                     ["validate-repo", "--offline", "--cache-dir", str(self.dir)])
+            self.assertEqual(code, 2, expected)
+            self.assertIn(expected, err)
+            self.assertNotIn(planted, out + err)
+
+    def test_enrich_end_to_end_admission_and_preprints(self):
+        tmp = Path(self.tmp.name)
+        rows = corpus()
+        # pre1 is recognised by its repository source, pre2 by its OpenAlex type
+        rows.append(dict(paper("pre1", 2024, "Zenodo", stype="repository"), type="dataset",
+                         cited_by_count="5", citation_normalized_percentile="0.42", citation_top_10_percent="False"))
+        rows.append(dict(paper("pre2", 2023, "arXiv (Cornell University)", stype=""), type="preprint",
+                         cited_by_count="90", citation_normalized_percentile="0.97", citation_top_10_percent="True"))
+        fields = list(dict.fromkeys(k for r in rows for k in r))
+        src = tmp / "in.csv"
+        with src.open("w", encoding="utf-8-sig", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+        venue_file = self.write_list()
+        proj = make_project_copy(tmp)
+        base = ["enrich", "--offline", "--cache-dir", str(self.dir), "--input", str(src)]
+        code, out, err = run_cli(proj, base + ["--output", str(tmp / "a"), "--venue-tiers", str(venue_file),
+                                               "--admit-tier", "A", "--quartile", "Q1"])
+        self.assertEqual(code, 0, err)
+        enriched = {r["openalex_id"]: r for r in read_csv(tmp / "a_enriched.csv")}
+        main_ids = {r["openalex_id"] for r in read_csv(tmp / "a_main.csv")}
+        # p10 (Conf Proc: a conference without quartile) and p08 (Unknown Venue: not in SCImago) enter as tier A
+        self.assertTrue({"p08", "p10"} <= main_ids)
+        self.assertEqual((enriched["p10"]["main_admission_tier"], enriched["p10"]["main_waived_reasons"]),
+                         ("A", "SOURCE_TYPE_FILTER; QUARTILE_UNAVAILABLE"))
+        self.assertEqual(enriched["p08"]["main_waived_reasons"], "SOURCE_STATUS_UNMATCHED; QUARTILE_UNAVAILABLE")
+        self.assertNotIn("p11", main_ids)  # Old Name is tier C, not admitted
+        self.assertIn("admitted by venue tier A (venue filters waived): {'A': 2}", out)
+        summary = json.loads((tmp / "a_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["admission_by_venue_tier"]["papers_admitted_by_waiving_venue_filters"], {"A": 2})
+        self.assertEqual(summary["preprints"], {"papers": 2, "in_main_corpus": 0, "citation_top_10_percent": 1})
+        preprints = read_csv(tmp / "a_preprints.csv")
+        self.assertEqual([r["openalex_id"] for r in preprints], ["pre2", "pre1"])  # most cited first
+        self.assertEqual(list(preprints[0]), list(read_csv(tmp / "a_enriched.csv")[0]))  # same columns as enriched
+        self.assertIn("preprints (OpenAlex type preprint or a repository source): 2", out)
+        meta = json.loads((tmp / "a_run_metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual((meta["policy"]["admit_tiers"], meta["outputs"]["preprints_csv"]), (["A"], str(tmp / "a_preprints.csv")))
+        # re-enriching without --admit-tier drops the admission columns; the preprint list is still written
+        code, out, err = run_cli(proj, base[:-1] + [str(tmp / "a_enriched.csv"), "--output", str(tmp / "b")])
+        self.assertEqual(code, 0, err)
+        header = (tmp / "b_enriched.csv").read_text(encoding="utf-8-sig").splitlines()[0]
+        self.assertNotIn("main_admission_tier", header)
+        self.assertNotIn("admission_by_venue_tier", json.loads((tmp / "b_summary.json").read_text(encoding="utf-8")))
+        self.assertEqual(len(read_csv(tmp / "b_preprints.csv")), 2)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ from .openalex import download_queries, search_query_problem
 from .scimago import enrich_records
 from .scimago_repo import DEFAULT_MANIFEST_URL, sync_repository
 from .venues import TIER_FIELDS as VENUE_TIER_FIELDS
-from .venues import VenueTiers
+from .venues import VenueTiers, admit_tier_problem
 
 
 def load_queries(query_values: Optional[List[str]], query_file: Optional[Path]) -> List[str]:
@@ -60,6 +60,29 @@ def _quartile_from_row(row: Dict[str, Any], basis: str, mode: str) -> str:
 # Added next to QUARTILE_UNAVAILABLE when a publication-basis quartile filter meets a paper published after the
 # last SCImago year: no publication-year quartile can exist, and the latest quartile is deliberately not used.
 FUTURE_YEAR_QUARTILE_REASON = "QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE"
+
+
+# Reasons set by the venue filters (SCImago status, source type, quartile). A paper whose venue tier is admitted with
+# --admit-tier has them waived; the APC, DOAJ, CWTS Core and retraction filters still apply.
+VENUE_FILTER_REASON_PREFIXES = ("SOURCE_STATUS_", "SOURCE_TYPE_FILTER", "QUARTILE_")
+ADMISSION_FIELDS = ("main_admission_tier", "main_waived_reasons")
+
+
+def is_preprint(row: Dict[str, Any]) -> bool:
+    """OpenAlex types the work as a preprint, or its source is a repository (arXiv, Zenodo, a university archive)."""
+    return (safe_str(row.get("type")).casefold() == "preprint"
+            or safe_str(row.get("source_type")).casefold() == "repository")
+
+
+def _preprint_order(row: Dict[str, Any]) -> Tuple[int, float, float, str]:
+    """Most cited first: top-10% flag, then citation percentile, then citation count."""
+    def number(value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return -1.0
+    return (-int(_truthy(row.get("citation_top_10_percent"))), -number(row.get("citation_normalized_percentile")),
+            -number(row.get("cited_by_count")), safe_str(row.get("title")))
 
 
 def _scimago_last_year(manifest: Dict[str, Any]) -> Optional[int]:
@@ -124,7 +147,9 @@ def apply_main_policy(
     require_cwts_core: bool = False,
     any_source_status: bool = False,
     exclude_retracted: bool = False,
+    admit_tiers: Optional[List[str]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    admit = {tier for tier in (admit_tiers or []) if tier}
     source_types_norm = {x.casefold() for x in (source_types or []) if x}
     quartiles_norm = {x.upper() for x in (quartiles or []) if x}
     last_year = _scimago_last_year(manifest)
@@ -181,6 +206,14 @@ def apply_main_policy(
             reasons.append("NOT_IN_CWTS_CORE")
         if exclude_retracted and _truthy(row.get("is_retracted")):
             reasons.append("RETRACTED")
+
+        if admit:
+            # The user's venue list admits this venue: the venue filters are waived and recorded, not hidden.
+            tier = safe_str(row.get("venue_tier"))
+            waived = [r for r in reasons if r.startswith(VENUE_FILTER_REASON_PREFIXES)] if tier in admit else []
+            reasons = [r for r in reasons if r not in waived]
+            row["main_admission_tier"] = tier if tier in admit else ""
+            row["main_waived_reasons"] = "; ".join(waived)
 
         row["main_corpus"] = not reasons
         row["main_exclusion_reasons"] = "; ".join(reasons)
@@ -324,6 +357,12 @@ def build_summary(rows: List[Dict[str, Any]], main: List[Dict[str, Any]], exclud
     if any("venue_tier" in row for row in rows):
         quality["paper_venue_tier_counts"] = _count_field(rows, "venue_tier")
         quality["unique_source_venue_tier_counts"] = _count_field(audit, "venue_tier")
+    preprints = [row for row in rows if is_preprint(row)]
+    quality["preprints"] = {
+        "papers": len(preprints),
+        "in_main_corpus": sum(1 for row in preprints if _truthy(row.get("main_corpus"))),
+        "citation_top_10_percent": sum(1 for row in preprints if _truthy(row.get("citation_top_10_percent"))),
+    }
     return {
         "tool_version": __version__,
         "total_enriched_records": len(rows),
@@ -383,15 +422,27 @@ def quartile_filter_diagnostics(
     }
 
 
+def admission_summary(rows: List[Dict[str, Any]], admit_tiers: List[str]) -> Dict[str, Any]:
+    """Summary block written when --admit-tier is used: papers that entered the main corpus only because their venue
+    tier is admitted (the venue filters would have excluded them)."""
+    admitted = [row for row in rows if _truthy(row.get("main_corpus")) and safe_str(row.get("main_waived_reasons"))]
+    return {
+        "admit_tiers": sorted({tier for tier in admit_tiers if tier}),
+        "papers_in_admitted_tiers": sum(1 for row in rows if safe_str(row.get("main_admission_tier"))),
+        "papers_admitted_by_waiving_venue_filters": _count_field(admitted, "main_admission_tier"),
+    }
+
+
 def _write_partitions(output_prefix: Path, enriched: List[Dict[str, Any]], main: List[Dict[str, Any]],
                       excluded: List[Dict[str, Any]]) -> Dict[str, str]:
-    """Write enriched/main/excluded/audit files; main and excluded share the enriched column order."""
+    """Write enriched/main/excluded/audit/preprint files; main, excluded and preprints share the enriched columns."""
     paths = {
         "enriched_csv": Path(str(output_prefix) + "_enriched.csv"),
         "enriched_jsonl": Path(str(output_prefix) + "_enriched.jsonl"),
         "main_csv": Path(str(output_prefix) + "_main.csv"),
         "excluded_csv": Path(str(output_prefix) + "_excluded.csv"),
         "source_audit_csv": Path(str(output_prefix) + "_source_audit.csv"),
+        "preprints_csv": Path(str(output_prefix) + "_preprints.csv"),
     }
     fieldnames = union_fieldnames(enriched)
     write_csv(paths["enriched_csv"], enriched, fieldnames)
@@ -399,6 +450,8 @@ def _write_partitions(output_prefix: Path, enriched: List[Dict[str, Any]], main:
     write_csv(paths["main_csv"], main, fieldnames)
     write_csv(paths["excluded_csv"], excluded, fieldnames)
     write_csv(paths["source_audit_csv"], source_audit(enriched))
+    # Preprints for manual screening, most cited first; the file is written even when empty.
+    write_csv(paths["preprints_csv"], sorted((row for row in enriched if is_preprint(row)), key=_preprint_order), fieldnames)
     return {name: str(path) for name, path in paths.items()}
 
 
@@ -429,6 +482,9 @@ def enrich_existing_file(
     venue_tiers: Optional[VenueTiers] = None,
     **policy_kwargs: Any,
 ) -> Dict[str, Any]:
+    problem = admit_tier_problem(policy_kwargs.get("admit_tiers") or [], venue_tiers)
+    if problem:
+        raise ValueError(problem)
     if input_path.suffix.lower() == ".jsonl":
         rows = read_jsonl(input_path)
     else:
@@ -440,6 +496,8 @@ def enrich_existing_file(
     outputs = _write_partitions(output_prefix, enriched, main, excluded)
     summary = build_summary(enriched, main, excluded)
     summary["quartile_filter_diagnostics"] = quartile_filter_diagnostics(excluded, manifest, **policy_kwargs)
+    if policy_kwargs.get("admit_tiers"):
+        summary["admission_by_venue_tier"] = admission_summary(enriched, policy_kwargs["admit_tiers"])
     if repository_state is not None:
         summary["scimago_repository"] = repository_state
     summary_json = Path(str(output_prefix) + "_summary.json")
@@ -497,6 +555,9 @@ def run_pipeline(
         problem = search_query_problem(query, search_field)
         if problem:
             raise ValueError(f"query {query!r}: {problem}")
+    problem = admit_tier_problem(policy_kwargs.get("admit_tiers") or [], venue_tiers)
+    if problem:
+        raise ValueError(problem)
     repo = sync_repository(
         cache_dir=cache_dir,
         manifest_url=manifest_url,
@@ -536,6 +597,8 @@ def run_pipeline(
 
     summary = build_summary(enriched, main, excluded)
     summary["quartile_filter_diagnostics"] = quartile_filter_diagnostics(excluded, manifest, **policy_kwargs)
+    if policy_kwargs.get("admit_tiers"):
+        summary["admission_by_venue_tier"] = admission_summary(enriched, policy_kwargs["admit_tiers"])
     summary["openalex"] = openalex_summary
     summary["scimago_repository"] = repo["state"]
     write_json(summary_json, summary)

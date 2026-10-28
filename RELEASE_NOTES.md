@@ -1,10 +1,15 @@
 # Release notes - OpenAlex Literature Intelligence
 
-- **Version:** 4.0.0
+- **Version:** 4.1.0
 - **Release date:** 2026-10-28
 - **Previous stable release:** 3.0.5 (2026-10-25)
 
 OpenAlex Literature Intelligence finds literature in OpenAlex and enriches each venue with historical and latest SCImago data (SJR, quartiles, categories, estimated APC). It then screens a main corpus and keeps a full audit trail. See `README.md` for usage and `CHANGELOG.md` for every change.
+
+## New in 4.1.0: admitting listed venues and a preprint list
+- `--admit-tier A --admit-tier B` admits papers of the venues your `--venue-tiers` list puts in those tiers, even when the SCImago status, source-type or quartile filters would exclude them, so strong conferences absent from SCImago, or present without a quartile, can enter the main corpus. The APC, DOAJ, CWTS Core and retraction filters still apply, and `main_waived_reasons` records what was set aside.
+- `config.json` can hold the defaults: `screening.venue_tiers` and `screening.admit_tiers`; `--no-admit-tiers` turns admission off for a journal-only view.
+- `<output>_preprints.csv` lists the preprints and repository records of each run, most cited first, for manual screening; preprints are not admitted wholesale.
 
 ## Changed in 4.0.0: default quartile basis
 - `--quartile` without `--quartile-basis` now screens by the venue's quartile in the latest SCImago snapshot (`latest`) instead of the quartile of the publication year (`publication`), so papers newer than the SCImago data are no longer excluded by accident.
@@ -87,3 +92,4 @@ OpenAlex Literature Intelligence finds literature in OpenAlex and enriches each 
 8. Strict ISSN conflict protection may prefer false negatives over false-positive venue matches; review `TITLE_MATCH_ISSN_CONFLICT` rows in `source_audit.csv`.
 9. The SCImago mirror repeats the current H-index in every year, so `h_index_at_publication` is not a historical H-index.
 10. The mirror's server `manifest.json` still lists only four matching methods. This is documentation only; the client does not read it.
+11. Venue tiers, `--admit-tier` and the preprint list use the source of the primary location that OpenAlex reports. When OpenAlex gives a repository copy as the primary location of a published paper, the paper is listed as a preprint and is not admitted by tier.

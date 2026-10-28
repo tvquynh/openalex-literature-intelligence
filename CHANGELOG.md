@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.1.0 - 2026-10-28
+Two additions: admitting listed venues to the main corpus, and a preprint list for manual screening. Without `--admit-tier`, the main corpus does not change.
+
+- `--admit-tier TIER` (repeatable; `run`, `enrich`) admits papers whose venue has that tier in the `--venue-tiers` list even when the SCImago status, source-type or quartile filters would exclude them, for example conferences absent from SCImago or without a quartile. The APC, DOAJ, CWTS Core and retraction filters still apply. New columns `main_admission_tier` and `main_waived_reasons` (only with `--admit-tier`) and `admission_by_venue_tier` in `summary.json`; `--no-admit-tiers` turns admission off.
+- `--admit-tier` without a venue list, a tier missing from the list, and the reserved names `UNLISTED` and `AMBIGUOUS` stop `run` and `enrich` before any SCImago or OpenAlex request (exit code 2).
+- New `config.json` section `screening` with `venue_tiers` (a path, relative to the config file) and `admit_tiers` (a list), the defaults for `run` and `enrich`; values of the wrong type are refused without echoing them.
+- Every `run` and `enrich` writes `<output>_preprints.csv`: the works that OpenAlex types as preprints or whose source is a repository, most cited first, with the enriched columns. `summary.json` reports `preprints` (papers, in the main corpus, in the top 10% by citations).
+- Real-data check: on 100 papers of a live query, admitting tiers A and B of a 52-venue list raised the main corpus from 25 to 38 papers; on the 73 seed papers of a review, from 20 to 33.
+- 4 new offline tests (85 in total), each checked against deliberate faults: only the venue filters are waived, the checks run before any network access, `config.json` defaults and overrides, and an end-to-end `enrich` with admission and the preprint list.
+- Documentation: README, `docs/README_vi.md`, `docs/QUICKSTART_vi.md`, the user guide (Appendix H) and `config.example.json`.
+
 ## 4.0.0 - 2026-10-28
 Behavior change: the default `--quartile-basis` is now `latest`, so a quartile filter no longer drops the newest papers by accident.
 

@@ -1,8 +1,8 @@
-# OpenAlex Literature Intelligence v4.0.0
+# OpenAlex Literature Intelligence v4.1.0
 
-> Bản tiếng Việt của README. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Các tính năng có từ v3.1.0 đến v3.2.0 được hướng dẫn ở các mục 15 đến 18 của phần "Các lệnh chính": chọn chỗ khớp query (`--search-field`), cờ bài bị rút và số trích dẫn chuẩn hóa, tầng nguồn công bố (`--venue-tiers`), tải toàn văn truy cập mở (`fetch-oa`). Từ v3.3.0, khi lọc quartile theo năm xuất bản, công cụ báo rõ các paper mới hơn dữ liệu SCImago (mục 5). Từ v4.0.0, `--quartile` mặc định lọc theo quartile của snapshot SCImago mới nhất (`--quartile-basis latest`, mục 5).
+> Bản tiếng Việt của README. Hướng dẫn đầy đủ bằng tiếng Anh: [USER_GUIDE.md](USER_GUIDE.md). Các đường dẫn file trong bản này tính từ thư mục gốc của repository. Các tính năng có từ v3.1.0 đến v3.2.0 được hướng dẫn ở các mục 15 đến 18 của phần "Các lệnh chính": chọn chỗ khớp query (`--search-field`), cờ bài bị rút và số trích dẫn chuẩn hóa, tầng nguồn công bố (`--venue-tiers`), tải toàn văn truy cập mở (`fetch-oa`). Từ v3.3.0, khi lọc quartile theo năm xuất bản, công cụ báo rõ các paper mới hơn dữ liệu SCImago (mục 5). Từ v4.0.0, `--quartile` mặc định lọc theo quartile của snapshot SCImago mới nhất (`--quartile-basis latest`, mục 5). Từ v4.1.0, `--admit-tier` nhận vào main corpus các nguồn trong danh sách tầng, kể cả hội nghị không có trong SCImago, và preprint được xuất ra file riêng để sàng lọc tay (mục 19).
 
-Phiên bản: **4.0.0** · Ngày phát hành: 2026-10-28 · Bản ổn định trước: 3.0.5 (2026-10-25) · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
+Phiên bản: **4.1.0** · Ngày phát hành: 2026-10-28 · Bản ổn định trước: 3.0.5 (2026-10-25) · Xem [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) (tóm tắt bản phát hành) và [`CHANGELOG.md`](../CHANGELOG.md) (chi tiết).
 
 ## Công cụ làm gì (What does the tool do?)
 
@@ -144,7 +144,8 @@ notepad config.json
 {
   "openalex": { "api_key": "YOUR_OPENALEX_API_KEY", "email": "" },
   "scimago":  { "manifest_url": "https://scopus.cuatui.cloud/du-lieu/scimago/manifest.json", "cache_dir": "cache/scimago" },
-  "run":      { "from_year": 2010, "to_year": 2026, "require_abstract": false, "max_per_query": null, "search_field": "search" }
+  "run":      { "from_year": 2010, "to_year": 2026, "require_abstract": false, "max_per_query": null, "search_field": "search" },
+  "screening": { "venue_tiers": "", "admit_tiers": [] }
 }
 ```
 
@@ -584,6 +585,28 @@ Lý do trong danh sách tải tay gồm `NOT_OPEN_ACCESS` (không có bản mở
 
 Trong một lần dùng thật trên 100 bài (xem [`TEST_REPORT.md`](../TEST_REPORT.md)), công cụ tải được 38 PDF, khoảng một nửa số bài có bản truy cập mở; phần còn lại chủ yếu do nhà xuất bản chặn bot hoặc do link dẫn tới trang bài thay vì file PDF. Truy cập mở không có nghĩa là được tự do tái sử dụng: hãy kiểm tra giấy phép của từng file trước khi chia sẻ.
 
+## 19. Nhận nguồn trong danh sách vào main corpus và danh sách preprint (từ v4.1.0)
+
+Main corpus mặc định chỉ giữ tạp chí có trong bản SCImago mới nhất, nên bỏ sót nhiều hội nghị mạnh: nhiều hội nghị không có trong SCImago, còn hội nghị có trong SCImago thì không có quartile. `--admit-tier A --admit-tier B` nhận mọi bài có nguồn được danh sách `--venue-tiers` xếp tầng A hoặc B, kể cả khi bộ lọc trạng thái SCImago, loại nguồn hoặc quartile sẽ loại bài đó. Bộ lọc APC, DOAJ, CWTS Core và bài bị rút vẫn áp dụng.
+
+```powershell
+python literature_pipeline.py enrich `
+  --input PE_Malware_raw.jsonl `
+  --output PE_Malware_AB `
+  --venue-tiers my_venues.tsv `
+  --admit-tier A `
+  --admit-tier B
+```
+
+- Cột `main_admission_tier` ghi tầng được nhận, cột `main_waived_reasons` ghi các bộ lọc nguồn đã được bỏ qua; `_summary.json` đếm số bài vào main corpus theo cách này ở mục `admission_by_venue_tier`.
+- Tầng không có trong danh sách, tên dành riêng (`UNLISTED`, `AMBIGUOUS`), hoặc `--admit-tier` mà không có danh sách đều làm lệnh dừng trước mọi lượt tải (mã thoát 2).
+- Có thể đặt làm mặc định trong `config.json`: `"screening": {"venue_tiers": "my_venues.tsv", "admit_tiers": ["A", "B"]}` (đường dẫn tương đối tính theo thư mục chứa `config.json`). `--no-admit-tiers` tắt việc nhận theo tầng, dùng khi cần góc nhìn chỉ có tạp chí.
+- Trên 100 bài của một query thật 2010-2026, danh sách có các hội nghị an ninh và học máy lớn ở tầng A và B làm main corpus tăng từ 25 lên 38 bài; cả 13 bài thêm vào đều từ hội nghị, như NDSS, ACM CCS, ACSAC và workshop ACM AISec.
+
+Preprint không được nhận đồng loạt, vì phần lớn chưa qua bình duyệt và cùng một công trình thường xuất hiện sau đó ở tạp chí hoặc hội nghị. Thay vào đó, mỗi lần `run` hoặc `enrich` ghi file `<output>_preprints.csv` gồm các bài OpenAlex xếp loại preprint hoặc có nguồn là kho lưu trữ (arXiv, Zenodo, kho của trường đại học), bài được trích dẫn nhiều xếp trước (theo cờ nhóm 10% trích dẫn cao nhất, rồi phân vị trích dẫn, rồi số trích dẫn). File có cùng cột với file `_enriched`, nên `fetch-oa` đọc được; `_summary.json` ghi số đếm ở mục `preprints`. Preprint quan trọng, như bộ dữ liệu chỉ công bố trên arXiv, nên được lấy qua các bài trích dẫn chúng.
+
+OpenAlex đôi khi chọn bản trong kho lưu trữ làm vị trí chính của một bài đã đăng ở hội nghị hoặc tạp chí, ví dụ kho của trường đại học cho một bài USENIX Security. Công cụ chỉ đọc nguồn của vị trí chính, nên bài đó nằm trong `_preprints.csv` và không được `--admit-tier` nhận, kể cả khi nguồn thật có trong danh sách. Khi sàng lọc danh sách preprint, cần tìm bản đã xuất bản của từng công trình.
+
 ---
 
 # Các output chính
@@ -610,6 +633,7 @@ PE_Malware_run_metadata.json
 |---|---|
 | `_raw.csv` / `_raw.jsonl` | Mọi paper OpenAlex đã discovery (đã deduplicate), chưa enrich; luôn được giữ |
 | `_checkpoint.json` | Trạng thái cursor để resume |
+| `_preprints.csv` | Preprint và bản ghi từ kho lưu trữ (arXiv, Zenodo, kho của trường đại học), bài được trích dẫn nhiều xếp trước, để sàng lọc tay; cùng cột với file `_enriched` |
 | `_enriched.csv` / `_enriched.jsonl` | Raw + toàn bộ metadata SCImago/APC, status, match method, chẩn đoán |
 | `_main.csv` | Paper qua policy (mặc định journal + `ACTIVE_LATEST`) và các filter CLI |
 | `_excluded.csv` | Paper bị loại, có cột `main_exclusion_reasons` |
@@ -819,7 +843,7 @@ Không đưa API key vào:
 
 Kết quả kiểm thử của bản phát hành: xem [`TEST_REPORT.md`](../TEST_REPORT.md).
 
-Kiểm thử offline (81 test; không cần Internet, không cần API key; dùng repository SCImago giả lập và server 127.0.0.1 với key giả và trang chống bot mô phỏng):
+Kiểm thử offline (85 test; không cần Internet, không cần API key; dùng repository SCImago giả lập và server 127.0.0.1 với key giả và trang chống bot mô phỏng):
 
 ```powershell
 python -m unittest discover -s tests -v

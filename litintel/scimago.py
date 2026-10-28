@@ -588,6 +588,7 @@ ENRICHMENT_FIELDS = (
     "issn_conflict_candidates", "match_diagnostic",
     "source_class", "main_corpus", "main_exclusion_reasons",
     "venue_tier", "venue_tier_venue", "venue_tier_match",
+    "main_admission_tier", "main_waived_reasons",
 )
 
 

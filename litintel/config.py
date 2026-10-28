@@ -25,10 +25,12 @@ SCHEMA: Dict[str, Dict[str, Tuple[type, ...]]] = {
     "scimago": {"manifest_url": (str,), "cache_dir": (str,)},
     "run": {"from_year": (int,), "to_year": (int,), "require_abstract": (bool,), "max_per_query": (int, type(None)),
             "search_field": (str,)},
+    # defaults for run and enrich: the venue list (--venue-tiers) and the tiers it admits (--admit-tier)
+    "screening": {"venue_tiers": (str,), "admit_tiers": (list,)},
 }
 # (section, key) -> allowed string values; an empty string still means "use the default"
 CHOICES: Dict[Tuple[str, str], Tuple[str, ...]] = {("run", "search_field"): SEARCH_FIELDS}
-_TYPE_NAMES = {str: "a string", int: "an integer", bool: "true/false", type(None): "null"}
+_TYPE_NAMES = {str: "a string", int: "an integer", bool: "true/false", type(None): "null", list: "a list of strings"}
 
 
 class ConfigError(ValueError):
@@ -94,15 +96,20 @@ def load_config(explicit_path: Optional[Path], default_dir: Path) -> Config:
             if not _type_ok(value, allowed):
                 expected = " or ".join(_TYPE_NAMES[t] for t in allowed)
                 raise ConfigError(f"{path}: '{section}.{key}' must be {expected}")
+            if isinstance(value, list):
+                if not all(isinstance(item, str) and item.strip() for item in value):
+                    raise ConfigError(f"{path}: '{section}.{key}' must be a list of non-empty strings")
+                value = [item.strip() for item in value]
             choices = CHOICES.get((section, key))
             if choices and value.strip() and value.strip() not in choices:
                 raise ConfigError(f"{path}: '{section}.{key}' must be one of: {', '.join(choices)}")
             clean[key] = value.strip() if isinstance(value, str) else value
         data[section] = clean
 
-    cache_dir = (data.get("scimago") or {}).get("cache_dir")
-    if cache_dir:
-        # Relative paths are relative to the config file, not to the current directory.
-        resolved = Path(cache_dir).expanduser()
-        data["scimago"]["cache_dir"] = str(resolved if resolved.is_absolute() else path.parent / resolved)
+    # Relative paths are relative to the config file, not to the current directory.
+    for section, key in (("scimago", "cache_dir"), ("screening", "venue_tiers")):
+        value = (data.get(section) or {}).get(key)
+        if value:
+            resolved = Path(value).expanduser()
+            data[section][key] = str(resolved if resolved.is_absolute() else path.parent / resolved)
     return Config(path=path, data=data)

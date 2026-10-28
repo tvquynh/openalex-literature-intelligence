@@ -21,7 +21,7 @@ from litintel.scimago_repo import (
     sync_repository,
     validate_cached_repository,
 )
-from litintel.venues import VenueTierError, VenueTiers
+from litintel.venues import VenueTierError, VenueTiers, admit_tier_problem
 
 # No personal default: the OpenAlex mailto comes from --email or config.json openalex.email (else none is sent).
 DEFAULT_EMAIL = ""
@@ -62,6 +62,13 @@ def resolve_settings(args: argparse.Namespace, config: Config) -> Dict[str, str]
     if hasattr(args, "cache_dir"):  # commands that use the SCImago repository (fetch-oa does not)
         args.cache_dir = Path(pick("cache_dir", args.cache_dir, "scimago", "cache_dir", DEFAULT_CACHE))
         args.manifest_url = pick("manifest_url", args.manifest_url, "scimago", "manifest_url", DEFAULT_MANIFEST_URL)
+    if hasattr(args, "venue_tiers"):  # commands with screening options (run, enrich)
+        venue_tiers = pick("venue_tiers", args.venue_tiers, "screening", "venue_tiers", None)
+        args.venue_tiers = Path(venue_tiers) if venue_tiers else None
+        if args.no_admit_tiers:
+            args.admit_tiers, sources["admit_tiers"] = [], "cli"
+        else:
+            args.admit_tiers = list(pick("admit_tiers", args.admit_tier, "screening", "admit_tiers", []))
     if args.command == "run":
         args.from_year = pick("from_year", args.from_year, "run", "from_year", DEFAULT_FROM_YEAR)
         args.to_year = pick("to_year", args.to_year, "run", "to_year", DEFAULT_TO_YEAR)
@@ -153,9 +160,26 @@ def add_policy_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "Your venue list (TSV, or CSV by extension; columns tier, venue, openalex_source_id, issn, "
-            "title_exact, title_contains). Adds venue_tier, venue_tier_venue and venue_tier_match; filters nothing. "
+            "title_exact, title_contains). Adds venue_tier, venue_tier_venue and venue_tier_match; filters nothing "
+            "unless --admit-tier is given. Default: config.json screening.venue_tiers, else none. "
             "See examples/venue_tiers_example.tsv"
         ),
+    )
+    parser.add_argument(
+        "--admit-tier",
+        action="append",
+        default=None,
+        help=(
+            "Admit papers whose venue has this tier in the --venue-tiers list to the main corpus even when the venue "
+            "filters (SCImago status, source type, quartile) would exclude them, e.g. conferences absent from SCImago; "
+            "APC, DOAJ, CWTS Core and retraction filters still apply. Repeat as needed. "
+            "Default: config.json screening.admit_tiers, else none"
+        ),
+    )
+    parser.add_argument(
+        "--no-admit-tiers",
+        action="store_true",
+        help="Admit no tier, overriding screening.admit_tiers in config.json (for a journal-only view)",
     )
 
 
@@ -174,17 +198,23 @@ def policy_kwargs(args: argparse.Namespace):
         "require_cwts_core": args.require_cwts_core,
         "any_source_status": args.any_source_status,
         "exclude_retracted": args.exclude_retracted,
+        "admit_tiers": args.admit_tiers,
     }
 
 
 def load_venue_tiers(args: argparse.Namespace):
-    """Return (VenueTiers or None, error message or None); the list is read before any network access."""
-    if args.venue_tiers is None:
-        return None, None
-    try:
-        return VenueTiers.load(args.venue_tiers), None
-    except VenueTierError as exc:
-        return None, f"ERROR (venue list): {exc}"
+    """Return (VenueTiers or None, error message or None); the list and the admitted tiers are checked before any
+    network access."""
+    tiers = None
+    if args.venue_tiers is not None:
+        try:
+            tiers = VenueTiers.load(args.venue_tiers)
+        except VenueTierError as exc:
+            return None, f"ERROR (venue list): {exc}"
+    problem = admit_tier_problem(args.admit_tiers, tiers)
+    if problem:
+        return None, f"ERROR (venue list): {problem}"
+    return tiers, None
 
 
 def print_quality_summary(summary: Dict[str, Any], args: argparse.Namespace) -> None:
@@ -196,6 +226,15 @@ def print_quality_summary(summary: Dict[str, Any], args: argparse.Namespace) -> 
               "run `run` again to obtain is_retracted, fwci and citation_normalized_percentile.")
     if "paper_venue_tier_counts" in summary:
         print("  paper venue tier:", summary["paper_venue_tier_counts"])
+    admission = summary.get("admission_by_venue_tier")
+    if admission:
+        print(f"  admitted by venue tier {', '.join(admission['admit_tiers'])} (venue filters waived):",
+              admission["papers_admitted_by_waiving_venue_filters"])
+    preprints = summary.get("preprints") or {}
+    if preprints.get("papers"):
+        print(f"  preprints (OpenAlex type preprint or a repository source): {preprints['papers']:,}, "
+              f"{preprints['in_main_corpus']:,} in the main corpus, {preprints['citation_top_10_percent']:,} in the "
+              f"top 10% by citations; listed most cited first in {args.output}_preprints.csv for manual screening")
 
 
 def print_quartile_warning(summary: Dict[str, Any]) -> None:

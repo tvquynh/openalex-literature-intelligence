@@ -1,21 +1,21 @@
-# Test report - OpenAlex Literature Intelligence v4.0.0
+# Test report - OpenAlex Literature Intelligence v4.1.0
 
-Release date: 2026-10-28. 4.0.0 changes the default `--quartile-basis` from `publication` to `latest`, so a quartile filter keeps the newest papers when their venue qualifies. 3.3.0 reported papers published after the last SCImago year precisely when a publication-basis quartile filter excludes them: an extra exclusion reason, a console warning and summary diagnostics. 3.2.0 added `run --search-field` (match queries against titles and abstracts only). 3.1.1 fixed one `fetch-oa` defect found in real use (doi.org paused after a redirect to a bot check). 3.1.0 added quality signals with user-defined venue tiers, and the `fetch-oa` command (open-access full text). The automated tests below were rerun with the 4.0.0 code.
+Release date: 2026-10-28. 4.1.0 adds `--admit-tier`, which admits the venues of chosen tiers in your list to the main corpus even when the venue filters would exclude them, and a list of preprints for manual screening. 4.0.0 changed the default `--quartile-basis` from `publication` to `latest`, so a quartile filter keeps the newest papers when their venue qualifies. 3.3.0 reported papers published after the last SCImago year precisely when a publication-basis quartile filter excludes them: an extra exclusion reason, a console warning and summary diagnostics. 3.2.0 added `run --search-field` (match queries against titles and abstracts only). 3.1.1 fixed one `fetch-oa` defect found in real use (doi.org paused after a redirect to a bot check). 3.1.0 added quality signals with user-defined venue tiers, and the `fetch-oa` command (open-access full text). The automated tests below were rerun with the 4.1.0 code.
 
 ## Automated test suite (shipped in `tests/`)
 Command: `python -m unittest discover -s tests -v`, run in a brand-new virtual environment on a clean copy of the repository tree.
 
 | Item | Result |
 |---|---|
-| Tool version | 4.0.0 (`python literature_pipeline.py --version`) |
+| Tool version | 4.1.0 (`python literature_pipeline.py --version`) |
 | Python | 3.11.9 |
 | OS | Windows 11 Pro, build 26100 |
 | Dependencies | requests 2.34.2, urllib3 2.8.0, idna 3.20, charset-normalizer 3.5.2, certifi 2026.10.23 |
-| Total tests | 81 (52 from 3.0.5, 12 for `fetch-oa`, 7 for quality signals and venue tiers, 4 for the search field, 6 for papers newer than the SCImago data) |
-| Passed | 81 |
+| Total tests | 85 (52 from 3.0.5, 12 for `fetch-oa`, 7 for quality signals and venue tiers, 4 for the search field, 6 for papers newer than the SCImago data, 4 for venue admission and preprints) |
+| Passed | 85 |
 | Failed | 0 |
 | Skipped | 0 |
-| Duration | 31.1 s |
+| Duration | 32.3 s |
 
 The tests need no network and no API key: they use a synthetic SCImago repository and local 127.0.0.1 servers with fake keys and simulated bot checks.
 
@@ -35,6 +35,11 @@ Test groups:
   - over mixed rows only those papers are counted; a source outside the latest snapshot, or a missing quartile inside the SCImago years, keeps `QUARTILE_UNAVAILABLE` alone;
   - `enrich` and `run` print the warning only with a publication-basis quartile filter and at least one affected paper, `summary.json` always has `quartile_filter_diagnostics`, and the run metadata holds the SCImago years and the quartile policy;
   - the default basis is `latest` (changed in 4.0.0): without `--quartile-basis`, the library functions, `enrich` and `run` keep a 2026 paper whose venue has a selected latest quartile, print no warning and record `latest` in the summary and the run metadata.
+- **Venue admission and preprints (new in 4.1.0):**
+  - `--admit-tier` waives only the SCImago status, source-type and quartile reasons of papers in admitted tiers and records them in `main_waived_reasons`; APC, DOAJ, CWTS Core and retraction reasons stay, other tiers and `AMBIGUOUS` are not admitted, and without the option no admission column appears;
+  - `--admit-tier` without a list, an unknown tier and a reserved name stop `enrich` and `run` before any request, and no SCImago cache is created;
+  - `screening.venue_tiers` (relative to `config.json`) and `screening.admit_tiers` give the defaults, `--admit-tier` and `--no-admit-tiers` override them, and values of the wrong type are refused without echoing them;
+  - an end-to-end `enrich` admits a conference without a quartile and a venue absent from SCImago, writes the preprint list most cited first with the enriched columns (preprints are recognised by OpenAlex type and by repository source), and re-enriching without the option drops the admission columns.
 - **Security:** API-key redaction, no personal e-mail in source.
 - **Repository checksums:** cold, warm, corrupt, offline, tampered, 404, unsafe names.
 - **Corpus policy:** journal-only, all source types, historical-only, order-independent audit, stable schema.
@@ -62,10 +67,10 @@ Test groups:
   - header names in lower case (`location`, `retry-after`) are handled, and every request appears in `fetch_log.csv`;
   - pacing, the User-Agent, and the CLI option checks are covered.
 
-Before release, an independent review of the first `fetch-oa` draft reproduced nine defects with local servers. All are fixed in 3.1.0, and each has a test above. The new venue-tier tests were also checked against deliberate faults (shortest instead of longest phrase, matching inside words, stale tiers kept on re-enrichment, a retraction lost on merge): each fault makes a test fail. The search-field tests were checked the same way against five faults (the field ignored when the request is built, the field left out of the checkpoint signature, commas accepted, any `config.json` value accepted, the CLI check removed): each makes at least one test fail. The tests for papers newer than the SCImago data were checked against six faults (the new reason never added, added with the latest basis, added for every future-year paper, the latest quartile copied into the publication-year columns, the warning printed with a count of 0, the generic reason dropped): each makes at least one test fail. Reverting the default basis to `publication`, in the CLI or in the library, also makes a test fail.
+Before release, an independent review of the first `fetch-oa` draft reproduced nine defects with local servers. All are fixed in 3.1.0, and each has a test above. The new venue-tier tests were also checked against deliberate faults (shortest instead of longest phrase, matching inside words, stale tiers kept on re-enrichment, a retraction lost on merge): each fault makes a test fail. The search-field tests were checked the same way against five faults (the field ignored when the request is built, the field left out of the checkpoint signature, commas accepted, any `config.json` value accepted, the CLI check removed): each makes at least one test fail. The tests for papers newer than the SCImago data were checked against six faults (the new reason never added, added with the latest basis, added for every future-year paper, the latest quartile copied into the publication-year columns, the warning printed with a count of 0, the generic reason dropped): each makes at least one test fail. Reverting the default basis to `publication`, in the CLI or in the library, also makes a test fail. The venue-admission and preprint tests were checked against ten faults (every reason waived, admission ignored, admission columns always written, the reserved-name and missing-list checks removed, the preprint order reversed, either preprint criterion dropped, list values in `config.json` not checked, `--no-admit-tiers` ignored): each makes at least one test fail.
 
 ## Reference-corpus regression (100 OpenAlex records, real verified SCImago 2010-2025 mirror)
-First run with the 3.1.0 code (not shipped: needs the reference corpus), and rerun with the 3.2.0 and 3.3.0 code on 27 October 2026 and with the 4.0.0 code on 28 October 2026, with the same results: the five CSV/JSONL files listed below are byte-identical to the earlier 3.1.0 outputs in both modes, the invariant checker again passes 20/20 in both modes, and `inspect-source` gives the same answer.
+First run with the 3.1.0 code (not shipped: needs the reference corpus), and rerun with the 3.2.0 and 3.3.0 code on 27 October 2026 and with the 4.0.0 and 4.1.0 code on 28 October 2026, with the same results: the five CSV/JSONL files listed below are byte-identical to the earlier 3.1.0 outputs in both modes, the invariant checker again passes 20/20 in both modes, and `inspect-source` gives the same answer.
 
 | Check | Result |
 |---|---|
@@ -76,7 +81,7 @@ First run with the 3.1.0 code (not shipped: needs the reference corpus), and rer
 | independent invariant checker (`tools/check_reference_invariants.py`) | 20/20 PASS (default), 20/20 PASS (all source types) |
 | `inspect-source --title "IEEE Access" --issn 9999-9999` | UNMATCHED, `TITLE_MATCH_ISSN_CONFLICT` |
 
-These match 3.0.5 Stable exactly. Run without the new options, 3.1.0 and 3.0.5 write byte-identical `_enriched.csv`, `_enriched.jsonl`, `_main.csv`, `_excluded.csv` and `_source_audit.csv` files in both modes; `_summary.json` differs only in `tool_version` and three new counts. The reference records were retrieved with 3.0.2, so they carry no retraction flag or citation measures, and the tool reports this. These runs use no quartile filter, so with 4.0.0 only the basis recorded in `quartile_filter_diagnostics` changes, to the new default `latest`.
+These match 3.0.5 Stable exactly. Run without the new options, 3.1.0 and 3.0.5 write byte-identical `_enriched.csv`, `_enriched.jsonl`, `_main.csv`, `_excluded.csv` and `_source_audit.csv` files in both modes; `_summary.json` differs only in `tool_version` and three new counts. The reference records were retrieved with 3.0.2, so they carry no retraction flag or citation measures, and the tool reports this. These runs use no quartile filter, so with 4.0.0 only the basis recorded in `quartile_filter_diagnostics` changes, to the new default `latest`. With 4.1.0, `_summary.json` also gains the `preprints` counts (13 of the 100 records) and `_preprints.csv` is written; the five files listed above do not change.
 
 With `--venue-tiers examples/venue_tiers_example.tsv`, one of the 100 papers is labelled (B, Computers & Security, matched by ISSN) and 99 are `UNLISTED`. The example list names none of the venues of the other 99 papers.
 
@@ -92,6 +97,19 @@ With `--venue-tiers examples/venue_tiers_example.tsv`, one of the 100 papers is 
 | warning printed | yes | no |
 
 With the publication basis, `_main.csv` and `_source_audit.csv` are byte-identical to 3.2.0, and in `_excluded.csv` only the reasons of the 12 papers change, from `QUARTILE_UNAVAILABLE` to `QUARTILE_UNAVAILABLE; QUARTILE_PUBLICATION_YEAR_NOT_AVAILABLE`. With the latest basis, all files are identical to 3.2.0. With 4.0.0 the same command without `--quartile-basis` uses the latest basis and gives the latest-basis column: 22 papers in the main corpus and no warning.
+
+## Real-data check of venue admission and preprints (2026-10-28)
+`enrich --offline` with a 52-venue list (12 venues in tier A, 22 in tier B, 18 in tier C) and six relevant categories, on two inputs, with and without `--admit-tier A --admit-tier B`.
+
+| | 100 papers of a live 2010-2026 query | 73 seed papers of a review |
+|---|---:|---:|
+| main corpus without admission | 25 | 20 |
+| main corpus with tiers A and B admitted | 38 | 33 |
+| admitted by waiving venue filters (A / B) | 4 / 9 | 9 / 4 |
+| preprints listed | 36 | 27 |
+| of these, top 10% by citations | 0 | 3 |
+
+All admitted papers come from conferences or workshops, such as NDSS, ACM CCS, IEEE S&P, USENIX Security, ICLR, ACSAC and ACM AISec; the waived reasons were `SOURCE_TYPE_FILTER`, alone or with `SOURCE_STATUS_UNMATCHED`. Three KDD papers stayed unlisted because the list's phrase contains a word that the OpenAlex source name lacks, which is why the names in a list should be checked against `_source_audit.csv`.
 
 ## Live check of `--search-field` (2026-10-27)
 One query, `malware AND ("concept drift" OR "temporal drift" OR "dataset shift")`, publication years 2010-2026, abstract required, all source types, run with each search field. Four OpenAlex requests in total; cost reported by OpenAlex 0.004 USD.

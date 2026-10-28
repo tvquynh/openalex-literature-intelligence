@@ -1,6 +1,6 @@
 # OpenAlex Literature Intelligence
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-4.0.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-81%2F81-brightgreen)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-4.1.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-85%2F85-brightgreen)
 
 A command-line tool that turns a literature search into an auditable corpus. It finds works in
 [OpenAlex](https://openalex.org/), attaches SCImago venue data (SJR, quartiles, categories, estimated
@@ -36,7 +36,9 @@ Workflow overview. The exact output file names are listed under [Outputs](#outpu
   DOAJ, CWTS Core, source type, retracted works.
 - **Quality signals and venue tiers (v3.1.0).** Each record keeps the retraction flag and the
   field-normalized citation measures of OpenAlex, and can be labelled with the tier of its venue from a
-  list you maintain.
+  list you maintain. From v4.1.0, `--admit-tier` admits the listed venues of chosen tiers to the main
+  corpus, including conferences absent from SCImago, and preprints are listed in a separate file for
+  manual screening.
 - **Audit trail.** The raw corpus is never overwritten; every excluded paper carries its exclusion
   reasons; a per-source audit, a summary and run metadata (tool version, policy, manifest, environment)
   are written with each run; every SCImago file is verified by SHA-256.
@@ -117,7 +119,9 @@ Common screening options (for `run` and `enrich`):
 | `--all-source-types` | drop the journal-only default |
 | `--include-historical-only`, `--any-source-status` | also admit `HISTORICAL_ONLY` sources, or disable status filtering |
 | `--exclude-retracted` | drop works that OpenAlex marks as retracted (reason `RETRACTED`) |
-| `--venue-tiers my_venues.tsv` | no effect on the main corpus: adds the tier columns described under [Quality signals and venue tiers](#quality-signals-and-venue-tiers) |
+| `--venue-tiers my_venues.tsv` | no effect on the main corpus by itself: adds the tier columns described under [Quality signals and venue tiers](#quality-signals-and-venue-tiers) |
+| `--admit-tier A --admit-tier B` | admit papers of venues listed with these tiers even when the SCImago status, source-type or quartile filters would exclude them; see [Admitting listed venues](#admitting-listed-venues) |
+| `--no-admit-tiers` | admit no tier, overriding `screening.admit_tiers` in `config.json` |
 
 Filters combine with AND. Records that fail a filter go to `_excluded.csv` with the reason, so a
 stricter or looser policy can be applied later with `enrich` without querying OpenAlex again.
@@ -174,6 +178,7 @@ For `--output pilot`:
 | `pilot_summary.json` | counts by status, source class, match method, quartile and ranking basis; `quartile_filter_diagnostics` |
 | `pilot_run_metadata.json` | tool version, queries, search field, policy, manifest and environment; records whether a key was configured, never the key |
 | `pilot_checkpoint.json` | cursor and progress per query, used to resume |
+| `pilot_preprints.csv` | preprints and repository records (arXiv, Zenodo, university archives), most cited first, for manual screening; same columns as the enriched file |
 
 ## Search field
 
@@ -241,6 +246,47 @@ examples, not a recommendation. Two facts are worth knowing when you write a lis
 conference proceedings, so a quartile filter cannot rank conferences; and conference papers printed in a
 book series such as Lecture Notes in Computer Science carry the series as their OpenAlex source, so such a
 conference cannot be recognised by name.
+
+### Admitting listed venues
+
+The default main corpus keeps journals of the latest SCImago snapshot, which leaves out strong
+conferences: many are absent from SCImago, and those present have no quartile. From v4.1.0,
+`--admit-tier A --admit-tier B` admits every paper whose venue has tier A or B in your `--venue-tiers` list,
+even when the SCImago status, source-type or quartile filters would exclude it. The APC, DOAJ, CWTS Core
+and retraction filters still apply. Two columns record the decision: `main_admission_tier` (the admitted
+tier) and `main_waived_reasons` (the venue filters that were set aside), and the summary counts the papers
+admitted this way under `admission_by_venue_tier`. A tier that is not in the list, a reserved name, or
+`--admit-tier` without a list stops the command before any download.
+
+Both settings can be made defaults in `config.json`; `--no-admit-tiers` turns admission off for a
+journal-only view:
+
+```json
+"screening": {
+  "venue_tiers": "my_venues.tsv",
+  "admit_tiers": ["A", "B"]
+}
+```
+
+On 100 papers of a live 2010-2026 query, a list with the major security and machine-learning conferences
+in tiers A and B raised the main corpus from 25 to 38 papers, all 13 from conferences such as NDSS, ACM
+CCS, ACSAC and the ACM AISec workshop.
+
+### Preprints
+
+Preprints are not admitted wholesale: most are not peer reviewed, and the same work often appears later
+in a journal or conference. Every `run` and `enrich` instead writes `<output>_preprints.csv`, with the works
+that OpenAlex types as preprints or whose source is a repository (arXiv, Zenodo, a university archive),
+most cited first (the top-10% citation flag, then the citation percentile, then the citation count).
+The file has the same columns as the enriched file, so `fetch-oa` can read it, and the summary reports
+the counts under `preprints`. Important preprints, such as datasets released only on arXiv, are best
+reached through the papers that cite them.
+
+OpenAlex sometimes gives a repository copy as the primary location of a paper that appeared at a
+conference or in a journal, for example a university archive for a USENIX Security paper. The tool reads
+the source of the primary location only, so such a paper is listed in `_preprints.csv` and is not
+admitted by `--admit-tier`, even when its venue is in your list. When screening the preprint list, look
+for the published version of each work.
 
 ## Open-access full text
 
@@ -313,7 +359,7 @@ OpenAlex. If you redistribute data or derived datasets, check the terms of those
 python -m unittest discover -s tests -v
 ```
 
-The 81 tests need neither network access nor an API key: they use a synthetic SCImago repository and
+The 85 tests need neither network access nor an API key: they use a synthetic SCImago repository and
 local servers with fake keys and simulated bot checks.
 
 ## Citation and license
