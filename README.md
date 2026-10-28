@@ -367,7 +367,7 @@ local servers with fake keys and simulated bot checks.
 If the tool supports published work, please cite it using [CITATION.cff](CITATION.cff) (GitHub shows it
 under "Cite this repository"). The software is archived on Zenodo:
 [10.5281/zenodo.23680134](https://doi.org/10.5281/zenodo.23680134) for all versions (it resolves to the
-latest one), and [10.5281/zenodo.23714966](https://doi.org/10.5281/zenodo.23714966) for v4.0.0
+latest one), and [10.5281/zenodo.23727804](https://doi.org/10.5281/zenodo.23727804) for v4.1.0
 specifically; `CITATION.cff` lists the DOI of every archived version. The code is released
 under the [MIT License](LICENSE). The license covers
 the code only; OpenAlex and SCImago data remain under the terms of their providers.

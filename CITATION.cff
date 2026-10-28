@@ -27,6 +27,9 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.23714966
     description: DOI for version 4.0.0
+  - type: doi
+    value: 10.5281/zenodo.23727804
+    description: DOI for version 4.1.0
 repository-code: "https://github.com/tvquynh/openalex-literature-intelligence"
 abstract: >-
   Command-line tool that builds an auditable literature corpus: OpenAlex discovery,
