@@ -69,6 +69,7 @@ Windows PowerShell:
 git clone https://github.com/tvquynh/openalex-literature-intelligence.git
 cd openalex-literature-intelligence
 python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 Copy-Item config.example.json config.json   # then put your key in openalex.api_key
