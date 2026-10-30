@@ -1,15 +1,6 @@
 # OpenAlex Literature Intelligence
 
-> [!IMPORTANT]
-> **Archived predecessor:** OpenAlex Literature Intelligence has been superseded by
-> [ScholarFlow](https://github.com/tvquynh/scholarflow).
->
-> This repository is retained in read-only form for reproducibility, historical provenance,
-> and users who need the legacy 4.1.0 workflow. New development continues in ScholarFlow.
-> For migration guidance, see
-> [MIGRATION_TO_SCHOLARFLOW.md](https://github.com/tvquynh/scholarflow/blob/main/MIGRATION_TO_SCHOLARFLOW.md).
-> The first stable ScholarFlow release is
-> [v1.0.0](https://github.com/tvquynh/scholarflow/releases/tag/v1.0.0).
+
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23680134-blue)](https://doi.org/10.5281/zenodo.23680134) ![version](https://img.shields.io/badge/version-4.1.0-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![tests](https://img.shields.io/badge/unit%20tests-85%2F85-brightgreen)
 
